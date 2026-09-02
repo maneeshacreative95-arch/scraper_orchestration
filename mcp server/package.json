@@ -1,0 +1,16 @@
+{
+    "name": "myblocks-apikey-mcp-server",
+    "version": "1.0.0",
+    "description": "MCP Server to expose MyBlocks API Key Manager as tools for AI clients",
+    "main": "index.js",
+    "type": "module",
+    "scripts": {
+        "start": "node index.js",
+        "start:sse": "node index.js --sse"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.12.1",
+        "axios": "^1.7.9",
+        "dotenv": "^17.2.4"
+    }
+}

@@ -1041,6 +1041,183 @@ app.post('/api/scheduler/config', (req, res) => {
   res.json({ success: true, config: schedulerConfig, queueCount: cityQueue.length });
 });
 
+// ================= API Key Manager Endpoints (Separate Module) =================
+
+// Get all API keys for user/firm
+app.get('/api/apikey-manager/list', async (req, res) => {
+  const userid = req.query.userid || defaultScraperConfig.user_id || 1572;
+  const firmid = req.query.firmid || defaultScraperConfig.firm_id || 5;
+
+  try {
+    const query = `
+      SELECT 
+        ID, USERID, FIRMID, LLM_PROVIDER, LLM_PROVIDER_TYPE,
+        MODEL_NAME, MODEL_URL, MODEL_RESPONSE_VARIABLE,
+        API_KEY, STATUS, BLOCKED, SHOW_IN_UI, SPEED, INSRT_DTM, UPD_DTM
+      FROM API_KEY_MANAGER 
+      WHERE USERID = ? AND FIRMID = ? AND SHOW_IN_UI = 'YES'
+      ORDER BY ID DESC
+    `;
+    const results = await poolQuery(query, [userid, firmid]);
+    res.json(results);
+  } catch (err) {
+    console.error('[APIKEY] Error fetching keys:', err.message);
+    res.status(500).json({ error: 'Database query failed.' });
+  }
+});
+
+// Get list of available LLM providers
+app.get('/api/apikey-manager/providers', async (req, res) => {
+  try {
+    const query = `
+      SELECT DISTINCT PROVIDER_VALUE, PROVIDER_LABEL, PROVIDER_TYPE 
+      FROM LLM_PROVIDER_MODELS 
+      ORDER BY PROVIDER_LABEL ASC
+    `;
+    const results = await poolQuery(query);
+    res.json(results);
+  } catch (err) {
+    console.error('[APIKEY] Error fetching providers:', err.message);
+    res.status(500).json({ error: 'Failed to fetch providers.' });
+  }
+});
+
+// Get available models for a provider
+app.get('/api/apikey-manager/models', async (req, res) => {
+  const { provider } = req.query;
+  if (!provider) return res.status(400).json({ error: 'Provider is required.' });
+
+  try {
+    const query = `
+      SELECT MODEL_VALUE 
+      FROM LLM_PROVIDER_MODELS 
+      WHERE PROVIDER_VALUE = ?
+      ORDER BY MODEL_VALUE ASC
+    `;
+    const results = await poolQuery(query, [provider]);
+    const models = results.map(row => row.MODEL_VALUE);
+    res.json(models);
+  } catch (err) {
+    console.error('[APIKEY] Error fetching models:', err.message);
+    res.status(500).json({ error: 'Failed to fetch models.' });
+  }
+});
+
+// Add a new API key
+app.post('/api/apikey-manager/add', async (req, res) => {
+  const USERID = req.body.USERID || defaultScraperConfig.user_id || 1572;
+  const FIRMID = req.body.FIRMID || defaultScraperConfig.firm_id || 5;
+  const LLM_PROVIDER = req.body.LLM_PROVIDER;
+  const API_KEY = req.body.API_KEY || '';
+  const LLM_PROVIDER_TYPE = req.body.LLM_PROVIDER_TYPE || 'TEXT-TO-TEXT';
+  const MODEL_RESPONSE_VARIABLE = req.body.MODEL_RESPONSE_VARIABLE || null;
+  const SHOW_IN_UI = req.body.SHOW_IN_UI || 'YES';
+  let MODEL_NAME = req.body.MODEL_NAME;
+
+  if (!LLM_PROVIDER) {
+    return res.status(400).json({ success: false, message: 'LLM_PROVIDER is required' });
+  }
+
+  const isMyBlocksServer = LLM_PROVIDER && LLM_PROVIDER.startsWith('MYBLOCKS_SERVERS');
+  if (!isMyBlocksServer && !API_KEY) {
+    return res.status(400).json({ success: false, message: 'API_KEY is required for this provider' });
+  }
+
+  try {
+    if (!MODEL_NAME) {
+      const defaultModelResults = await poolQuery(
+        'SELECT MODEL_VALUE FROM LLM_PROVIDER_MODELS WHERE PROVIDER_VALUE = ? ORDER BY MODEL_VALUE ASC LIMIT 1',
+        [LLM_PROVIDER]
+      );
+      MODEL_NAME = defaultModelResults.length > 0 ? defaultModelResults[0].MODEL_VALUE : 'default';
+    }
+
+    const providerResults = await poolQuery(
+      'SELECT PROVIDER_URL FROM LLM_PROVIDER_MODELS WHERE PROVIDER_VALUE = ? AND MODEL_VALUE = ? LIMIT 1',
+      [LLM_PROVIDER, MODEL_NAME]
+    );
+    const modelUrl = providerResults.length > 0 ? providerResults[0].PROVIDER_URL : null;
+
+    const insertQuery = `
+      INSERT INTO API_KEY_MANAGER (
+        USERID, FIRMID, LLM_PROVIDER, LLM_PROVIDER_TYPE, MODEL_NAME,
+        MODEL_URL, MODEL_RESPONSE_VARIABLE, API_KEY, 
+        STATUS, BLOCKED, SHOW_IN_UI
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'NO', ?)
+    `;
+
+    const result = await poolQuery(insertQuery, [
+      USERID, FIRMID, LLM_PROVIDER, LLM_PROVIDER_TYPE, MODEL_NAME,
+      modelUrl, MODEL_RESPONSE_VARIABLE, API_KEY, SHOW_IN_UI
+    ]);
+
+    logReallocation(`[API KEY MANAGER] Added new API Key for provider '${LLM_PROVIDER}' (${MODEL_NAME})`);
+    res.status(201).json({
+      success: true,
+      message: 'API Key added successfully',
+      id: result.insertId,
+      model_assigned: MODEL_NAME
+    });
+  } catch (err) {
+    console.error('[APIKEY] Error inserting API Key:', err.message);
+    res.status(500).json({ success: false, message: 'Database error', details: err.message });
+  }
+});
+
+// Toggle API key status (ACTIVE/INACTIVE)
+app.post('/api/apikey-manager/toggle-status', async (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'ID is required.' });
+
+  try {
+    const results = await poolQuery('SELECT STATUS FROM API_KEY_MANAGER WHERE ID = ?', [id]);
+    if (results.length === 0) return res.status(404).json({ error: 'Key not found.' });
+
+    const currentStatus = results[0].STATUS;
+    const newStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+
+    await poolQuery('UPDATE API_KEY_MANAGER SET STATUS = ? WHERE ID = ?', [newStatus, id]);
+    res.json({ success: true, newStatus });
+  } catch (err) {
+    console.error('[APIKEY] Toggle status error:', err.message);
+    res.status(500).json({ error: 'Failed to update status.' });
+  }
+});
+
+// Toggle BLOCKED status (YES/NO)
+app.post('/api/apikey-manager/toggle-blocked', async (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'ID is required.' });
+
+  try {
+    const results = await poolQuery('SELECT BLOCKED FROM API_KEY_MANAGER WHERE ID = ?', [id]);
+    if (results.length === 0) return res.status(404).json({ error: 'Key not found.' });
+
+    const currentBlocked = results[0].BLOCKED;
+    const newBlocked = currentBlocked === 'YES' ? 'NO' : 'YES';
+
+    await poolQuery('UPDATE API_KEY_MANAGER SET BLOCKED = ? WHERE ID = ?', [newBlocked, id]);
+    res.json({ success: true, newBlocked });
+  } catch (err) {
+    console.error('[APIKEY] Toggle blocked error:', err.message);
+    res.status(500).json({ error: 'Failed to update blocked status.' });
+  }
+});
+
+// Delete API Key (soft delete)
+app.delete('/api/apikey-manager/delete/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'ID is required.' });
+
+  try {
+    await poolQuery("UPDATE API_KEY_MANAGER SET SHOW_IN_UI = 'NO', STATUS = 'INACTIVE' WHERE ID = ?", [id]);
+    res.json({ success: true, message: 'API key deleted successfully.' });
+  } catch (err) {
+    console.error('[APIKEY] Delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete API key.' });
+  }
+});
+
 // Fetch active unique regions (states) from Database
 app.get('/api/regions', async (req, res) => {
   let connection;

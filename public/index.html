@@ -31,6 +31,7 @@
         <button class="nav-btn" data-view="view-performance-matrix">📊 Performance Matrix</button>
         <button class="nav-btn" data-view="view-performance-improvements">🚀 Performance Improvements</button>
         <button class="nav-btn" data-view="view-common-errors">⚠️ Error Recovery</button>
+        <button class="nav-btn" data-view="view-api-key-manager">🔑 API Key Manager</button>
       </nav>
 
       <div class="sidebar-footer">
@@ -475,6 +476,77 @@
                   <!-- Dynamically populated -->
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 10. API Key Manager View (Separate Module) -->
+        <section id="view-api-key-manager" class="workflow-view hidden">
+          <div class="panel-card">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+              <div>
+                <h2 style="font-size: 1.5rem; color: #f8fafc; font-weight: 700;">🔐 API Key Manager</h2>
+                <p style="color: var(--color-text-muted); font-size: 0.875rem;">Securely manage your LLM provider credentials, models, and active states.</p>
+              </div>
+              <span class="badge badge-completed" style="padding: 8px 16px; border-radius: 20px; font-size: 0.8rem;">🔒 Encrypted & Managed</span>
+            </div>
+
+            <!-- Add API Key Form -->
+            <div style="background: rgba(15, 23, 42, 0.6); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border-card); margin-bottom: 2rem;">
+              <h3 style="font-size: 1.1rem; color: #f1f5f9; margin-bottom: 1rem;">Add New API Key / Provider</h3>
+              
+              <div id="apiKeyAlertMsg" style="display: none; padding: 12px; border-radius: 8px; margin-bottom: 1rem; font-size: 0.875rem;"></div>
+
+              <form id="apiKeyForm">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.2rem; margin-bottom: 1.2rem;">
+                  <div>
+                    <label style="display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px;">LLM Provider *</label>
+                    <select id="apiKeyProviderSelect" class="input-style" style="width: 100%; border-radius: 8px; padding: 10px;">
+                      <option value="">Loading providers...</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style="display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px;">Model Name</label>
+                    <select id="apiKeyModelSelect" class="input-style" style="width: 100%; border-radius: 8px; padding: 10px;">
+                      <option value="">Select Provider First</option>
+                    </select>
+                  </div>
+
+                  <div style="grid-column: span 2;">
+                    <label style="display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px;">API Key *</label>
+                    <input type="password" id="apiKeyValueInput" class="input-style" style="width: 100%; border-radius: 8px; padding: 10px;" placeholder="Enter your provider API Key (e.g. gsk_..., sk-..., AIza...)">
+                  </div>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span id="apiKeyTypeBadge" class="badge badge-pending" style="font-size: 0.75rem; padding: 6px 12px;">Type: 💬 Text Generation</span>
+                  <button type="submit" id="saveApiKeyBtn" class="btn btn-primary" style="padding: 10px 24px; border-radius: 8px; font-weight: 600;">➕ Add API Key</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- API Keys Details Table -->
+            <div>
+              <h3 style="font-size: 1.1rem; color: #f1f5f9; margin-bottom: 1rem;">Configured API Credentials</h3>
+              <div class="table-responsive">
+                <table class="data-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
+                  <thead>
+                    <tr style="background: rgba(15, 23, 42, 0.6); color: #94a3b8; font-size: 0.75rem; text-transform: uppercase;">
+                      <th style="padding: 12px 16px; text-align: left;">Provider</th>
+                      <th style="padding: 12px 16px; text-align: left;">Model Name</th>
+                      <th style="padding: 12px 16px; text-align: left;">Type</th>
+                      <th style="padding: 12px 16px; text-align: left;">API Key</th>
+                      <th style="padding: 12px 16px; text-align: center;">Status</th>
+                      <th style="padding: 12px 16px; text-align: center;">Blocked</th>
+                      <th style="padding: 12px 16px; text-align: right;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="apiKeyTableBody">
+                    <!-- Dynamically populated -->
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>
