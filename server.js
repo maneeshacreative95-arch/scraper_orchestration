@@ -89,6 +89,13 @@ const dbConfig = {
   port: 3306
 };
 
+const dbPool = mysql.createPool(dbConfig);
+
+async function poolQuery(sql, params = []) {
+  const [rows] = await dbPool.query(sql, params);
+  return rows;
+}
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
