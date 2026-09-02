@@ -247,29 +247,61 @@ async function getPortalIdByCityName(cityName, fallbackId) {
   return null;
 }
 
+async function getActiveApiKey(provider = 'GROQ') {
+  try {
+    const rows = await poolQuery(
+      `SELECT API_KEY, MODEL_NAME, MODEL_URL, LLM_PROVIDER, LLM_PROVIDER_TYPE 
+       FROM API_KEY_MANAGER 
+       WHERE STATUS = 'ACTIVE' AND SHOW_IN_UI = 'YES' AND BLOCKED = 'NO'
+       ORDER BY ID DESC`
+    );
+    if (rows && rows.length > 0) {
+      const match = rows.find(r => r.LLM_PROVIDER === provider) || rows.find(r => r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') || rows[0];
+      return {
+        key: match.API_KEY || process.env.GROQ_API_KEY || '',
+        model: match.MODEL_NAME || 'llama-3.3-70b-versatile',
+        provider: match.LLM_PROVIDER,
+        url: match.MODEL_URL
+      };
+    }
+  } catch (err) {
+    console.error('[APIKEY] Error loading active key:', err.message);
+  }
+  return {
+    key: process.env.GROQ_API_KEY || '',
+    model: 'llama-3.3-70b-versatile',
+    provider: 'GROQ'
+  };
+}
+
 // LLM Region Discovery & Business Estimation Engine (Step 1)
 async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit) {
-  // Configured Groq API key or Environment variable
-  const groqKey = process.env.GROQ_API_KEY || '';
-  const openaiKey = process.env.OPENAI_API_KEY;
+  const activeKeyObj = await getActiveApiKey('GROQ');
+  const key = activeKeyObj.key;
+  let modelName = activeKeyObj.model;
+  const provider = activeKeyObj.provider;
 
-  if (groqKey || openaiKey) {
+  // Fallback to standard text LLM model if an audio/speech model was selected in UI
+  if (!modelName || modelName.includes('orpheus') || modelName.includes('audio') || modelName.includes('speech') || modelName.includes('whisper')) {
+    modelName = 'llama-3.3-70b-versatile';
+  }
+
+  if (key) {
     try {
-      const url = groqKey 
-        ? 'https://api.groq.com/openai/v1/chat/completions' 
-        : 'https://api.openai.com/v1/chat/completions';
-      const key = groqKey || openaiKey;
-      const modelName = groqKey ? 'groq/compound-mini' : 'gpt-4o-mini';
+      let url = 'https://api.groq.com/openai/v1/chat/completions';
+      if (provider === 'OPENAI') url = 'https://api.openai.com/v1/chat/completions';
+      if (provider === 'OPENROUTER') url = 'https://openrouter.ai/api/v1/chat/completions';
+      if (provider === 'DEEPSEEK') url = 'https://api.deepseek.com/v1/chat/completions';
 
       const llmRes = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: modelName,
-          temperature: 0.2,
+          temperature: 0.3,
           messages: [
             { role: 'system', content: 'You are a location and market intelligence AI for India. Output strictly a JSON array of objects with keys: "state", "city", "approx_businesses". No prose or markdown formatting outside JSON.' },
-            { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Delhi","city":"New Delhi","approx_businesses":45000}]` }
+            { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]` }
           ]
         }),
         signal: AbortSignal.timeout(12000)
@@ -282,7 +314,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit) {
         if (matchJson) {
           const parsed = JSON.parse(matchJson[0]);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            logReallocation(`[GROQ LLM] Groq Llama-3.3-70B model generated ${parsed.length} location discoveries for topic '${topic}' across '${regionCoverage}'.`);
+            logReallocation(`[LLM DISCOVERY] ${provider} (${modelName}) generated ${parsed.length} dynamic location discoveries for topic '${topic}' across '${regionCoverage}'.`);
             return parsed.map(item => {
               const rawCount = parseInt(item.approx_businesses, 10) || 5000;
               const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
@@ -298,10 +330,10 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit) {
         }
       } else {
         const errText = await llmRes.text();
-        console.log('[GROQ LLM API Error]', llmRes.status, errText);
+        console.log('[LLM API Error]', llmRes.status, errText);
       }
     } catch (llmErr) {
-      console.log('[LLM DISCOVERY] Live API query timeout/fallback to DB Index Engine:', llmErr.message);
+      console.log('[LLM DISCOVERY] Live API query error/fallback:', llmErr.message);
     }
   }
 
