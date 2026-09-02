@@ -132,12 +132,39 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Fetch / Sync loop
+  // Fetch / Sync loop
   const API_BASE = '';
   let configInitialized = false;
 
+  const globalClientSelector = document.getElementById('globalClientSelector');
+
+  function getClientHeaders(customHeaders = {}) {
+    const headers = { ...customHeaders };
+    const clientVal = globalClientSelector ? globalClientSelector.value : '1572';
+    if (clientVal === 'admin') {
+      headers['X-Role'] = 'admin';
+      headers['X-Admin'] = 'true';
+    } else {
+      headers['X-Client-Id'] = clientVal;
+      headers['X-User-Id'] = clientVal;
+      headers['X-Auth-Client-Id'] = clientVal;
+    }
+    return headers;
+  }
+
+  if (globalClientSelector) {
+    globalClientSelector.addEventListener('change', () => {
+      fetchStatus();
+      if (typeof fetchApiKeyList === 'function') fetchApiKeyList();
+      if (typeof fetchApiKeyProviders === 'function') fetchApiKeyProviders();
+    });
+  }
+
   async function fetchStatus() {
     try {
-      const response = await fetch(`${API_BASE}/api/status`);
+      const response = await fetch(`${API_BASE}/api/status`, {
+        headers: getClientHeaders()
+      });
       if (!response.ok) throw new Error('Offline');
       const data = await response.json();
       updateUI(data);

@@ -100,6 +100,34 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Middleware: Client Extraction & Strict Isolation Check
+function extractClientContext(req, res, next) {
+  const headerClientId = req.headers['x-client-id'] || req.headers['x-user-id'];
+  const queryClientId = req.query.client_id || req.query.user_id;
+  const bodyClientId = req.body?.client_id || req.body?.user_id || req.body?.USERID;
+
+  const targetClientId = parseInt(headerClientId || queryClientId || bodyClientId || defaultScraperConfig.user_id, 10);
+  const isAdmin = (req.headers['x-role'] === 'admin') || (req.headers['x-admin'] === 'true') || (req.query.admin === 'true');
+
+  req.clientId = targetClientId;
+  req.isAdmin = isAdmin;
+
+  // Requirement 12: Enforce HTTP 403 Forbidden if non-admin attempts unauthorized cross-client access
+  const authHeader = req.headers['x-auth-client-id'];
+  if (!isAdmin && authHeader && parseInt(authHeader, 10) !== targetClientId) {
+    console.warn(`[SECURITY 403] Client ${authHeader} attempted unauthorized access to Client ${targetClientId}`);
+    return res.status(403).json({
+      error: '403 Forbidden: Cross-client access is strictly prohibited.',
+      auth_client_id: parseInt(authHeader, 10),
+      requested_client_id: targetClientId
+    });
+  }
+
+  next();
+}
+
+app.use(extractClientContext);
+
 // Workflows States
 let cityQueue = [];
 let currentOrchestrationTopic = 'General';
@@ -113,20 +141,20 @@ let errorHistory = [];
 let performanceMatrix = [];
 let allocationEngineActive = true; // State of the allocation loop (Pause / Resume)
 
-// Distributed Registered Runner Registry (Step 5)
+// Distributed Registered Runner Registry (Step 5) - Tagged with Client IDs
 const registeredRunnersList = [
-  { runner_id: 'r_1', server_name: 'Server-1 (Local Host PC)', host_ip: '127.0.0.1:7500', agent_name: 'Manisha (Local PC)', status: 'Idle' },
-  { runner_id: 'r_2', server_name: 'Server-2', host_ip: '192.168.1.101:7500', agent_name: 'Pavan G', status: 'Idle' },
-  { runner_id: 'r_3', server_name: 'Server-3', host_ip: '192.168.1.102:7500', agent_name: 'Rahsuf', status: 'Idle' },
-  { runner_id: 'r_4', server_name: 'Server-4', host_ip: '192.168.1.103:7500', agent_name: 'Sathwik', status: 'Idle' },
-  { runner_id: 'r_5', server_name: 'Server-5', host_ip: '192.168.1.104:7500', agent_name: 'Gokul', status: 'Idle' },
-  { runner_id: 'r_6', server_name: 'Server-6', host_ip: '192.168.1.105:7500', agent_name: 'Abhirami Aji', status: 'Idle' },
-  { runner_id: 'r_7', server_name: 'Server-7', host_ip: '192.168.1.106:7500', agent_name: 'Vismaya E', status: 'Idle' },
-  { runner_id: 'r_8', server_name: 'Server-8', host_ip: '192.168.1.107:7500', agent_name: 'Shrinidhi Mahalingappa Totagi', status: 'Idle' },
-  { runner_id: 'r_9', server_name: 'Server-9', host_ip: '192.168.1.108:7500', agent_name: 'Tushar Mehra', status: 'Idle' },
-  { runner_id: 'r_10', server_name: 'Server-10', host_ip: '192.168.1.109:7500', agent_name: 'Aayush', status: 'Idle' },
-  { runner_id: 'r_11', server_name: 'Server-11', host_ip: '192.168.1.110:7500', agent_name: 'Anonymous', status: 'Idle' },
-  { runner_id: 'r_12', server_name: 'Server-12', host_ip: '192.168.1.111:7500', agent_name: 'Malavika', status: 'Idle' }
+  { runner_id: 'r_1', server_name: 'Server-1 (Local Host PC)', host_ip: '127.0.0.1:7500', agent_name: 'Manisha (Local PC)', client_id: 1572, status: 'Idle' },
+  { runner_id: 'r_2', server_name: 'Server-2', host_ip: '192.168.1.101:7500', agent_name: 'Pavan G', client_id: 1572, status: 'Idle' },
+  { runner_id: 'r_3', server_name: 'Server-3', host_ip: '192.168.1.102:7500', agent_name: 'Rahsuf', client_id: 1572, status: 'Idle' },
+  { runner_id: 'r_4', server_name: 'Server-4', host_ip: '192.168.1.103:7500', agent_name: 'Sathwik', client_id: 1572, status: 'Idle' },
+  { runner_id: 'r_5', server_name: 'Server-5', host_ip: '192.168.1.104:7500', agent_name: 'Gokul (Client B)', client_id: 2001, status: 'Idle' },
+  { runner_id: 'r_6', server_name: 'Server-6', host_ip: '192.168.1.105:7500', agent_name: 'Abhirami Aji (Client B)', client_id: 2001, status: 'Idle' },
+  { runner_id: 'r_7', server_name: 'Server-7', host_ip: '192.168.1.106:7500', agent_name: 'Vismaya E (Client B)', client_id: 2001, status: 'Idle' },
+  { runner_id: 'r_8', server_name: 'Server-8', host_ip: '192.168.1.107:7500', agent_name: 'Shrinidhi (Client B)', client_id: 2001, status: 'Idle' },
+  { runner_id: 'r_9', server_name: 'Server-9', host_ip: '192.168.1.108:7500', agent_name: 'Tushar Mehra (Client C)', client_id: 3002, status: 'Idle' },
+  { runner_id: 'r_10', server_name: 'Server-10', host_ip: '192.168.1.109:7500', agent_name: 'Aayush (Client C)', client_id: 3002, status: 'Idle' },
+  { runner_id: 'r_11', server_name: 'Server-11', host_ip: '192.168.1.110:7500', agent_name: 'Anonymous (Client C)', client_id: 3002, status: 'Idle' },
+  { runner_id: 'r_12', server_name: 'Server-12', host_ip: '192.168.1.111:7500', agent_name: 'Malavika (Client C)', client_id: 3002, status: 'Idle' }
 ];
 
 let runnerRegistry = registeredRunnersList.map(r => ({
@@ -523,8 +551,9 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
 }
 
 // Workflow Queue & Dynamic Batch Partitioning Engine (Step 3 & Step 4)
-function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSize) {
+function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSize, clientId) {
   const bSize = configuredBatchSize || schedulerConfig.batch_size || 1000;
+  const cId = parseInt(clientId || defaultScraperConfig.user_id, 10);
 
   const schedulable = validationResults.filter(v => v.status !== 'Completed' && v.remaining_businesses > 0);
 
@@ -553,6 +582,7 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
         city_id: 'c_' + Math.random().toString(36).substr(2, 9),
         city_name: displayName,
         state: item.state,
+        client_id: cId,
         priority: priorityCounter++,
         estimated_company_count: totalRemaining,
         status: 'Pending',
@@ -577,6 +607,7 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
           city_id: 'c_' + Math.random().toString(36).substr(2, 9) + `_b${b + 1}`,
           city_name: `${item.city} [Batch ${b + 1}/${numBatches}] (${item.portal_id})`,
           state: item.state,
+          client_id: cId,
           priority: priorityCounter++,
           estimated_company_count: batchTarget,
           status: 'Pending',
@@ -949,30 +980,44 @@ app.get('/api/status', async (req, res) => {
       recommendation: 'Queue discovery items to utilize full allocation capacity.'
     });
   }
-    const activeRunners = runnerRegistry.filter(r => r.status === 'Running' || r.status === 'Busy').length;
-    const idleRunners = runnerRegistry.filter(r => r.status === 'Idle').length;
-    const failedRunners = runnerRegistry.filter(r => r.status === 'Offline' || r.status === 'Crashed').length;
+    const client_id = req.clientId || defaultScraperConfig.user_id;
+    const isAdmin = req.isAdmin;
 
-    const completedStatesList = [...new Set(cityQueue.filter(c => c.status === 'Completed').map(c => c.state))];
+    const filteredQueue = cityQueue.filter(c => isAdmin || (c.client_id || 1572) === client_id);
+    const filteredAgents = agents.filter(a => isAdmin || (a.client_id || 1572) === client_id);
+    const filteredRunners = runnerRegistry.filter(r => isAdmin || (r.client_id || 1572) === client_id);
+    const filteredAllocations = allocations.filter(a => isAdmin || (a.client_id || 1572) === client_id);
+    const filteredSchedulerBatches = schedulerBatches.filter(b => isAdmin || (b.client_id || 1572) === client_id);
+    const filteredReallocations = reallocationEvents.filter(e => isAdmin || (e.client_id || 1572) === client_id);
+    const filteredErrors = errorHistory.filter(e => isAdmin || (e.client_id || 1572) === client_id);
+    const filteredPerformance = performanceMatrix.filter(p => isAdmin || (p.client_id || 1572) === client_id);
+
+    const activeRunners = filteredRunners.filter(r => r.status === 'Running' || r.status === 'Busy').length;
+    const idleRunners = filteredRunners.filter(r => r.status === 'Idle').length;
+    const failedRunners = filteredRunners.filter(r => r.status === 'Offline' || r.status === 'Crashed').length;
+
+    const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
 
     res.json({
       backendOnline,
       backendStatus,
-      user_id: dbMetrics.user_id,
+      client_id: client_id,
+      is_admin: isAdmin,
+      user_id: client_id,
       firm_id: dbMetrics.firm_id,
-      memberid: dbMetrics.memberid,
-      cityQueue,
-      agents,
-      runners: runnerRegistry,
+      memberid: client_id,
+      cityQueue: filteredQueue,
+      agents: filteredAgents,
+      runners: filteredRunners,
       discoveryResults: latestDiscoveryResults,
       validationResults: latestValidationResults,
-      allocations,
-      schedulerBatches,
+      allocations: filteredAllocations,
+      schedulerBatches: filteredSchedulerBatches,
       executions,
       executionLogs,
-      reallocationEvents,
-      errorHistory,
-      performanceMatrix,
+      reallocationEvents: filteredReallocations,
+      errorHistory: filteredErrors,
+      performanceMatrix: filteredPerformance,
       allocationEngineActive,
       schedulerConfig,
       currentTopic: currentOrchestrationTopic,
@@ -992,7 +1037,7 @@ app.get('/api/status', async (req, res) => {
         avgExecutionTime,
         topAgent,
         slowestCity,
-        retryQueueCount: errorHistory.length
+        retryQueueCount: filteredErrors.length
       },
       recommendations
     });
@@ -1950,6 +1995,7 @@ async function allocationEngine() {
         agent_id: r.runner_id,
         portal_id: r.portal_id || null,
         agent_name: r.agent_name,
+        client_id: r.client_id,
         status: r.status || 'Idle',
         current_city: r.current_workflow || null,
         execution_id: r.execution_id || null,
@@ -1971,14 +2017,19 @@ async function allocationEngine() {
   for (const idleRunner of idleRunners) {
     if (cityQueue.filter(c => c.status === 'Running').length >= maxAllowedInstances) break;
 
-    // 1. First priority: Find a pending batch from a STATE that is NOT currently running on any other user!
+    const rClientId = idleRunner.client_id || 1572;
+
+    // Requirement 9: Only allocate batch to a runner belonging to the SAME client_id
+    // 1. First priority: Find a pending batch for THIS CLIENT from a STATE not currently running
     let city = cityQueue.find(c => {
       if (c.status !== 'Pending') return false;
+      const cClientId = c.client_id || 1572;
+      if (cClientId !== rClientId) return false;
       const st = (c.state || '').trim().toLowerCase();
       return st && !activeStates.has(st);
     });
 
-    // 2. Fallback: If all available states already have at least 1 runner assigned, find a pending batch from a distinct CITY
+    // 2. Fallback: Distinct CITY for same client_id
     if (!city) {
       const activeCities = new Set(
         cityQueue
@@ -1987,24 +2038,26 @@ async function allocationEngine() {
       );
       city = cityQueue.find(c => {
         if (c.status !== 'Pending') return false;
+        const cClientId = c.client_id || 1572;
+        if (cClientId !== rClientId) return false;
         const cityName = c.city_name.split(' [Batch')[0].trim().toLowerCase();
         return !activeCities.has(cityName);
       });
     }
 
-    // 3. Fallback: Take next pending batch in queue order
+    // 3. Fallback: Next pending batch for same client_id
     if (!city) {
-      city = cityQueue.find(c => c.status === 'Pending');
+      city = cityQueue.find(c => c.status === 'Pending' && (c.client_id || 1572) === rClientId);
     }
 
-    if (!city) break; // No more pending cities to allocate
+    if (!city) continue; // No pending batches for THIS client_id
 
-    // Mark state as active so the next runner will be assigned a different state!
+    // Mark state as active
     if (city.state) {
       activeStates.add(city.state.trim().toLowerCase());
     }
 
-    const idleAgent = agents.find(a => a.agent_name === idleRunner.agent_name) || agents.find(a => a.status === 'Idle');
+    const idleAgent = agents.find(a => a.agent_name === idleRunner.agent_name && a.client_id === rClientId) || agents.find(a => a.status === 'Idle' && a.client_id === rClientId);
 
     const pId = city.portal_id || resolvePortalIdFromText(city.city_name);
     if (pId) {
@@ -2290,9 +2343,10 @@ function autoReallocationEngine(scraperExecutions) {
             if (matchingRunner) matchingRunner.status = 'Offline';
           }
 
-          const nextIdleAgent = agents.find(a => a.status === 'Idle');
-          const nextIdleRunner = runnerRegistry.find(r => r.status === 'Idle');
-          const targetAgent = nextIdleAgent || (nextIdleRunner ? { agent_id: nextIdleRunner.runner_id, agent_name: nextIdleRunner.agent_name, status: 'Idle' } : null);
+          const cId = (city?.client_id || agent?.client_id || 1572);
+          const nextIdleAgent = agents.find(a => a.status === 'Idle' && (a.client_id || 1572) === cId);
+          const nextIdleRunner = runnerRegistry.find(r => r.status === 'Idle' && (r.client_id || 1572) === cId);
+          const targetAgent = nextIdleAgent || (nextIdleRunner ? { agent_id: nextIdleRunner.runner_id, agent_name: nextIdleRunner.agent_name, client_id: nextIdleRunner.client_id, status: 'Idle' } : null);
 
           if (targetAgent) {
             const recoveryMsg = `❌ Runner Marked OFFLINE (Chrome Crash) -> Auto-Reassigned to ${targetAgent.agent_name} -> Resumed from Company ${resumeStartFrom}`;
@@ -2315,7 +2369,7 @@ function autoReallocationEngine(scraperExecutions) {
             triggerScraperRun(city, targetAgent);
           } else {
             city.status = 'Failed';
-            city.recovery_event = `❌ Runner OFFLINE & No Idle Runners Available. Batch Marked FAILED at index ${resumeStartFrom}`;
+            city.recovery_event = `❌ Runner OFFLINE & No Idle Runners Available for Client ${cId}. Batch Marked FAILED at index ${resumeStartFrom}`;
             
             logReallocationEvent({
               event_type: 'Execution Failed (ChromeDriver/Timeout)',
@@ -2323,7 +2377,7 @@ function autoReallocationEngine(scraperExecutions) {
               to_agent: '-',
               portal_id: city.portal_id || '-',
               city_batch: city.city_name,
-              reason: `No idle runners available to reassign. Batch marked FAILED at index ${resumeStartFrom}.`
+              reason: `Runner failed 2/2 retries. No idle runners available for Client ${cId}. Batch marked FAILED.`
             });
           }
         }
@@ -2334,6 +2388,7 @@ function autoReallocationEngine(scraperExecutions) {
           city: city.city_name,
           portal_id: city.portal_id || '-',
           agent_name: agent ? agent.agent_name : 'Runner',
+          client_id: cId,
           error: realExec.error || 'session not created: unable to connect to renderer',
           fix_recommendation: 'Stale chromedriver.exe process killed. Batch auto-reassigned from last processed index.',
           timestamp: new Date().toLocaleTimeString()
@@ -2345,14 +2400,15 @@ function autoReallocationEngine(scraperExecutions) {
         const baseCityName = city.city_name.split(' [Batch')[0].trim();
         const cityBatches = cityQueue.filter(c => c.city_name.startsWith(baseCityName));
         const allCompleted = cityBatches.every(c => c.status === 'Completed');
+        const cId = (city.client_id || 1572);
         
         if (allCompleted) {
           logReallocation(`[CITY COMPLETE] All batches for ${baseCityName} finished!`);
           
-          // Auto-activate the next city from Priority Queue
-          const nextPendingCity = cityQueue.find(c => c.status === 'Pending' && !c.city_name.startsWith(baseCityName));
+          // Auto-activate the next city from Priority Queue for same client
+          const nextPendingCity = cityQueue.find(c => c.status === 'Pending' && (c.client_id || 1572) === cId && !c.city_name.startsWith(baseCityName));
           if (nextPendingCity) {
-            const nextIdleAgent = agents.find(a => a.status === 'Idle');
+            const nextIdleAgent = agents.find(a => a.status === 'Idle' && (a.client_id || 1572) === cId);
             if (nextIdleAgent) {
               logReallocation(`[AUTO-ACTIVATION] Activating next priority city: ${nextPendingCity.city_name} on agent ${nextIdleAgent.agent_name}`);
               nextPendingCity.status = 'Running';
@@ -2384,8 +2440,9 @@ async function monitorEngine() {
           const resumeIndex = (city.start_from || 1) + (city.companies_processed || 0);
           city.start_from = resumeIndex;
 
-          const nextIdleRunner = runnerRegistry.find(runner => runner.status === 'Idle');
-          const targetAgent = nextIdleRunner ? { agent_id: nextIdleRunner.runner_id, agent_name: nextIdleRunner.agent_name, status: 'Idle' } : null;
+          const rClientId = r.client_id || 1572;
+          const nextIdleRunner = runnerRegistry.find(runner => runner.status === 'Idle' && (runner.client_id || 1572) === rClientId);
+          const targetAgent = nextIdleRunner ? { agent_id: nextIdleRunner.runner_id, agent_name: nextIdleRunner.agent_name, client_id: rClientId, status: 'Idle' } : null;
 
           if (targetAgent) {
             city.status = 'Running';
