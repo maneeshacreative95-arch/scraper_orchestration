@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scraper Orchestrator Agent Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Left Sidebar Nav -->
+    <aside class="app-sidebar">
+      <div class="logo-area">
+        <span class="pulse-ring"></span>
+        <div class="logo-title">
+          <h1>SCRAPER AGENT</h1>
+          <span class="sub-badge">ORCHESTRATOR</span>
+        </div>
+      </div>
+
+      <nav class="workflow-nav">
+        <button class="nav-btn active" data-view="view-city-queue">🏙️ City Discovery</button>
+        <button class="nav-btn" data-view="view-agent-registry">🤖 Agent Registry</button>
+        <button class="nav-btn" data-view="view-allocation-engine">⚡ Agent Allocation</button>
+        <button class="nav-btn" data-view="view-batch-scheduler">📦 Batch Scheduler</button>
+        <button class="nav-btn" data-view="view-execution-monitor">📡 Execution Pipeline</button>
+        <button class="nav-btn" data-view="view-auto-reallocation">🔄 Auto Reallocation</button>
+        <button class="nav-btn" data-view="view-performance-matrix">📊 Performance Matrix</button>
+        <button class="nav-btn" data-view="view-performance-improvements">🚀 Performance Improvements</button>
+        <button class="nav-btn" data-view="view-common-errors">⚠️ Error Recovery</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <h3>Orchestrator Logs</h3>
+        <p>Dynamic standalone controller active. Connected to scraper backend at port 7500.</p>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <!-- Header -->
+      <header class="app-header">
+        <div class="header-left">
+          <h2>Smart Scraper Dashboard</h2>
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
+            <span class="badge badge-running" style="font-size: 0.65rem;">ONLINE</span>
+            <span class="badge badge-completed" style="font-size: 0.65rem;">CONNECTED</span>
+          </div>
+        </div>
+        <div class="header-right" style="display: flex; gap: 15px; align-items: center;">
+          <div class="sim-toggle-wrapper">
+            <span class="sim-label">Scraper Backend (7500):</span>
+            <span id="backendStatusBadge" class="badge badge-running">Checking...</span>
+          </div>
+          <button id="resetBtn" class="btn btn-secondary">Reset System State</button>
+        </div>
+      </header>
+
+      <main class="app-container">
+        
+        <!-- 1. City Queue & LLM Region Discovery View -->
+        <section id="view-city-queue" class="workflow-view">
+          <div class="panel-card" style="border: none; background: transparent; padding: 0; box-shadow: none;">
+            <!-- Free-text LLM Workflow Discovery Header -->
+            <div class="panel-header" style="padding: 0 0 1.5rem 0; flex-direction: column; align-items: flex-start; gap: 15px; width: 100%;">
+              <h2 style="font-size: 1.5rem; font-weight: 700;">Workflow Discovery (LLM First & Distributed Orchestration)</h2>
+              <p style="font-size: 0.88rem; color: var(--color-text-muted); margin-top: -8px;">
+                Enter a free-text scraping request. The LLM will discover states/cities, estimate business potential, validate against the Portal Database, and schedule parallel batches across distributed runners.
+              </p>
+
+              <div style="display: flex; gap: 15px; width: 100%; align-items: stretch; background: var(--bg-card); padding: 1.2rem; border-radius: 12px; border: 1px solid var(--border-card);">
+                <textarea id="scrapingPromptInput" class="input-style" style="flex: 1; min-height: 70px; resize: vertical; border-radius: 8px; font-family: var(--font-sans); padding: 12px; margin-top: 0; font-size: 0.95rem;" placeholder='e.g. "Run healthcare companies across South India" or "Run AI startups across Entire India"'></textarea>
+                <button id="orchestratePromptBtn" class="btn btn-primary" style="border-radius: 8px; padding: 0 30px; font-size: 1rem; font-weight: 600; white-space: nowrap;">Analyze & Orchestrate</button>
+              </div>
+
+              <!-- Legacy compatibility elements -->
+              <div style="display: none;">
+                <input type="text" id="llmTopicInput">
+                <input type="text" id="llmRegionInput">
+                <input type="number" id="llmTargetLimitInput">
+                <button id="startLLMOrchestrationBtn"></button>
+                <textarea id="scrapingRequestInput"></textarea>
+                <button id="orchestrateTopicBtn"></button>
+                <select id="regionPopulateSelect"></select>
+                <button id="addCityTriggerBtn"></button>
+              </div>
+            </div>
+
+            <!-- Step 1 – LLM Region Discovery Results Panel -->
+            <div id="discoveryResultsPanel" class="panel-card hidden" style="margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(59, 130, 246, 0.3);">
+              <div class="panel-header">
+                <h3 style="font-size: 1.1rem; color: var(--accent-color);">Step 1: LLM Region Discovery Results</h3>
+              </div>
+              <div class="table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>State</th>
+                      <th>City / Town</th>
+                      <th>Approx Business Count</th>
+                    </tr>
+                  </thead>
+                  <tbody id="discoveryResultsTableBody">
+                    <!-- Dynamically populated -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Step 2 – Portal Database Validation Results Panel -->
+            <div id="validationResultsPanel" class="panel-card hidden" style="margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(16, 185, 129, 0.3);">
+              <div class="panel-header">
+                <h3 style="font-size: 1.1rem; color: var(--color-success);">Step 2: Portal Database Validation & Queue Scheduling</h3>
+              </div>
+              <div class="table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>State</th>
+                      <th>City / Town</th>
+                      <th>Estimated Businesses</th>
+                      <th>Existing Businesses</th>
+                      <th>Remaining Businesses</th>
+                      <th>Portal ID</th>
+                      <th>Validation Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="validationResultsTableBody">
+                    <!-- Dynamically populated -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div id="addCityForm" class="add-city-form hidden" style="background: var(--bg-card); border: 1px solid var(--border-card); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem;">
+              <input type="text" id="cityNameInput" placeholder="City Name (e.g. Bangalore (11061))" required>
+              <input type="text" id="cityStateInput" placeholder="State/Region">
+              <input type="number" id="cityPriorityInput" placeholder="Priority (1-10)" min="1" max="10" required>
+              <input type="number" id="cityCountInput" placeholder="Est. Companies" min="10">
+              <div class="form-buttons" style="margin-top: 15px;">
+                <button id="submitCityBtn" class="btn btn-primary btn-sm">Insert Queue</button>
+                <button id="cancelCityBtn" class="btn btn-secondary btn-sm">Cancel</button>
+              </div>
+            </div>
+
+            <!-- Dynamic City Cards Grid -->
+            <div id="cityQueueCardsContainer" class="city-cards-grid-list">
+              <!-- Dynamically populated card feed -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Distributed Runner Registry View -->
+        <section id="view-agent-registry" class="workflow-view hidden">
+          <div class="panel-card" style="margin-bottom: 1.5rem;">
+            <div class="panel-header">
+              <h2>Distributed Runner Registry (Step 5)</h2>
+              <button id="addRunnerTriggerBtn" class="btn btn-primary btn-sm">+ Register Runner</button>
+            </div>
+
+            <div id="addRunnerForm" class="add-city-form hidden" style="background: var(--bg-card); border: 1px solid var(--border-card); padding: 1.2rem; border-radius: 10px; margin-bottom: 1rem;">
+              <input type="text" id="runnerServerNameInput" placeholder="Server Name (e.g. GPU Server)" required>
+              <input type="text" id="runnerHostIpInput" placeholder="Host/IP (e.g. 192.168.1.102:7500)" required>
+              <input type="text" id="runnerAgentNameInput" placeholder="Agent Name (e.g. Agent-6)" required>
+              <div class="form-buttons" style="margin-top: 10px;">
+                <button id="submitRunnerBtn" class="btn btn-primary btn-sm">Save Runner</button>
+                <button id="cancelRunnerBtn" class="btn btn-secondary btn-sm">Cancel</button>
+              </div>
+            </div>
+
+            <p style="font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 1rem;">
+              Distributed runners installed across host servers, GPU servers, and cloud instances. Allocation Engine automatically assigns pending batches to idle runners.
+            </p>
+
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Server Name</th>
+                    <th>Runner ID</th>
+                    <th>Host / IP</th>
+                    <th>Assigned Agent</th>
+                    <th>Status</th>
+                    <th>Last Heartbeat</th>
+                    <th>Current Workflow</th>
+                    <th>Current Batch</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="runnerRegistryTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Legacy agent grid elements for JS compatibility -->
+          <div class="panel-card hidden" style="display: none;">
+            <div id="addAgentTriggerBtn"></div>
+            <div id="addAgentForm"></div>
+            <input type="text" id="agentNameInput">
+            <input type="number" id="agentPortalInput">
+            <button id="submitAgentBtn"></button>
+            <button id="cancelAgentBtn"></button>
+            <div class="agents-grid" id="agentsGrid"></div>
+          </div>
+        </section>
+
+        <!-- 3. Allocation Engine View -->
+        <section id="view-allocation-engine" class="workflow-view hidden">
+          <div class="panel-card">
+            <div class="panel-header">
+              <h2>Agent Allocation Engine</h2>
+              <div class="engine-controls">
+                <button id="pauseEngineBtn" class="btn btn-secondary btn-sm">Pause Engine</button>
+                <button id="resumeEngineBtn" class="btn btn-primary btn-sm hidden">Resume Engine</button>
+              </div>
+            </div>
+
+            <div class="allocation-grid" style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+              <!-- Manual allocation controls -->
+              <div class="manual-assign-box" style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-card); padding: 1.5rem; border-radius: 12px;">
+                <h3 style="font-size: 1rem; margin-bottom: 10px;">Manual Job Assignment</h3>
+                <div class="form-group" style="margin-top: 10px; display: flex; flex-direction: column; gap: 5px;">
+                  <label for="allocAgentSelect" style="font-size: 0.8rem; color: var(--color-text-muted);">Select Idle Agent</label>
+                  <select id="allocAgentSelect" class="input-style"></select>
+                </div>
+                <div class="form-group" style="margin-top: 10px; display: flex; flex-direction: column; gap: 5px;">
+                  <label for="allocCitySelect" style="font-size: 0.8rem; color: var(--color-text-muted);">Select Pending City</label>
+                  <select id="allocCitySelect" class="input-style"></select>
+                </div>
+                <button id="assignAgentBtn" class="btn btn-primary btn-sm" style="width: 100%; margin-top: 15px; height: 40px;">Assign Agent</button>
+              </div>
+
+              <!-- Active mappings -->
+              <div class="active-mappings-box" style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-card); padding: 1.5rem; border-radius: 12px;">
+                <h3 style="font-size: 1rem; margin-bottom: 10px;">Active Assignments & Controls</h3>
+                <div class="table-container">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Runner</th>
+                        <th>Portal ID</th>
+                        <th>Assigned City</th>
+                        <th>Batch</th>
+                        <th>Workflow Stage</th>
+                        <th>Scraped Contacts</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="allocationsTableBody">
+                      <!-- Dynamically populated -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. Batch Scheduler View -->
+        <section id="view-batch-scheduler" class="workflow-view hidden">
+          <div class="panel-card" style="margin-bottom: 1.5rem;">
+            <div class="panel-header">
+              <h2>Batch Scheduler Configurations</h2>
+            </div>
+            <div class="add-city-form" style="display: flex; flex-direction: column; gap: 15px; margin-bottom: 0;">
+              <div style="display: flex; gap: 15px; width: 100%;">
+                <div style="flex: 1;">
+                  <label style="font-size: 0.85rem; color: var(--color-text-muted); display: block; margin-bottom: 5px;">Configure Batch Size</label>
+                  <input type="number" id="schedBatchSizeInput" value="300" min="10" placeholder="Batch Size (e.g. 300)" style="width: 100%;">
+                </div>
+                <div style="flex: 1;">
+                  <label style="font-size: 0.85rem; color: var(--color-text-muted); display: block; margin-bottom: 5px;">Maximum Parallel Agents</label>
+                  <input type="number" id="schedMaxAgentsInput" value="5" min="1" max="20" placeholder="Max Parallel (e.g. 5)" style="width: 100%;">
+                </div>
+              </div>
+              <div style="display: flex; gap: 20px; align-items: center; background: rgba(255,255,255,0.02); padding: 10px; border-radius: 8px; border: 1px solid var(--border-card);">
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" id="runBasicCheck" checked> Basic Scraper
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" id="runContactCheck"> Contact Scraper
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" id="runSocialCheck"> Social Media Scraper
+                </label>
+                <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" id="runLeaderCheck"> Leader Scraper
+                </label>
+              </div>
+              <div style="display: flex; justify-content: flex-end;">
+                <button id="saveSchedConfigBtn" class="btn btn-primary btn-sm" style="height: 40px; padding: 0 20px;">Save Configuration</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-header">
+              <h2>Distributed Active Batches</h2>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 1rem;">
+              Shows the distribution of target limits partitioned into batches across agents. Use the split feature in City Queue to partition targets.
+            </p>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Batch / Execution ID</th>
+                    <th>Target Location</th>
+                    <th>Assigned Agent</th>
+                    <th>Start Time</th>
+                    <th>ETA</th>
+                    <th>Completion Time</th>
+                    <th>Progress</th>
+                  </tr>
+                </thead>
+                <tbody id="schedulerTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. Execution Monitor View -->
+        <section id="view-execution-monitor" class="workflow-view hidden">
+          <div class="panel-card">
+            <div class="panel-header">
+              <h2>Real-time Execution Pipeline Monitoring</h2>
+            </div>
+            <div class="monitor-list" id="monitorExecutionsList">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. Auto Reallocation View (Workflow 7 Timeline) -->
+        <section id="view-auto-reallocation" class="workflow-view hidden">
+          <div class="panel-card">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+              <div>
+                <h2 style="font-size: 1.5rem; color: #f8fafc; font-weight: 700; margin-bottom: 0.25rem;">Auto Reallocation Orchestration Timeline</h2>
+                <p style="color: var(--color-text-muted); font-size: 0.875rem;">Real-time timeline tracking 5s heartbeats, ChromeDriver crashes, completed batches, and automatic failovers.</p>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span class="badge badge-running" style="padding: 8px 16px; border-radius: 20px; font-size: 0.8rem; font-family: var(--font-mono);">🟢 5s Heartbeat Monitor Active</span>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
+                <thead>
+                  <tr style="background: rgba(15, 23, 42, 0.6); color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">
+                    <th style="padding: 12px 16px; text-align: left;">Timestamp</th>
+                    <th style="padding: 12px 16px; text-align: left;">Event Type</th>
+                    <th style="padding: 12px 16px; text-align: left;">From Agent</th>
+                    <th style="padding: 12px 16px; text-align: left;">To Agent</th>
+                    <th style="padding: 12px 16px; text-align: left;">Portal ID</th>
+                    <th style="padding: 12px 16px; text-align: left;">City / Batch</th>
+                    <th style="padding: 12px 16px; text-align: left;">Reason for Reallocation</th>
+                  </tr>
+                </thead>
+                <tbody id="reallocationTimelineBody">
+                  <!-- Dynamically rendered timeline rows -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 7. Performance Matrix View -->
+        <section id="view-performance-matrix" class="workflow-view hidden">
+          <!-- Matrix metrics cards -->
+          <div class="metrics-grid" style="margin-bottom: 2rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+            <div class="metric-card">
+              <div class="metric-header"><h3>Total Companies Scraped</h3></div>
+              <div class="metric-val" id="matrixTotalScraped">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header"><h3>States / Cities Completed</h3></div>
+              <div class="metric-val" id="matrixCompletedStats">0 / 0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header"><h3>Active / Idle Runners</h3></div>
+              <div class="metric-val" id="matrixRunnersStatus">0 / 0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header"><h3>Avg Speed (Co./Min)</h3></div>
+              <div class="metric-val" id="matrixAvgSpeed">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header"><h3>Average Success Rate</h3></div>
+              <div class="metric-val" id="matrixAvgSuccess">0%</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-header"><h3>Slowest City Location</h3></div>
+              <div class="metric-val" id="matrixSlowestCity" style="font-size: 1.3rem;">N/A</div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-header">
+              <h2>Historical Performance Matrix</h2>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>City</th>
+                    <th>Agent</th>
+                    <th>Portal ID</th>
+                    <th>Execution ID</th>
+                    <th>Target</th>
+                    <th>Scraped</th>
+                    <th>Success %</th>
+                    <th>Failed</th>
+                    <th>Duration (s)</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="matrixGridTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 8. Performance Improvements View -->
+        <section id="view-performance-improvements" class="workflow-view hidden">
+          <div class="panel-card">
+            <div class="panel-header">
+              <h2>AI Performance Recommendations & Improvements</h2>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Issue Detected</th>
+                    <th>Improvement Recommendation</th>
+                  </tr>
+                </thead>
+                <tbody id="improvementsTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 9. Common Errors & Fixes View -->
+        <section id="view-common-errors" class="workflow-view hidden">
+          <div class="panel-card">
+            <div class="panel-header">
+              <h2>Error diagnostics and Recovery Console</h2>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Execution ID</th>
+                    <th>Agent</th>
+                    <th>City</th>
+                    <th>Error Details</th>
+                    <th>Suggested Fix</th>
+                    <th>Retry Option</th>
+                  </tr>
+                </thead>
+                <tbody id="errorsTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <footer class="app-footer">
+        <p>Scraper Manager Distributed Orchestrator &bull; Premium Agent Interface</p>
+      </footer>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
