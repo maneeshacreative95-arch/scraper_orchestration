@@ -245,22 +245,34 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Logout Button Handler
-  const logoutBtn = document.getElementById('logoutBtn');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', async () => {
-      const token = localStorage.getItem('orchestrator_session_token');
-      if (token) {
-        fetch('/api/auth/logout', {
+  window.handleClientLogout = async function() {
+    const token = localStorage.getItem('orchestrator_session_token');
+    if (token) {
+      try {
+        await fetch('/api/auth/logout', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Session-Token': token
           }
-        }).catch(() => {});
-      }
-      localStorage.clear();
-      currentSession = null;
-      checkAuthStatus();
+        });
+      } catch (e) {}
+    }
+    localStorage.removeItem('orchestrator_session_token');
+    localStorage.removeItem('orchestrator_session_data');
+    localStorage.clear();
+    sessionStorage.clear();
+    currentSession = null;
+    const loginModal = document.getElementById('clientLoginModal');
+    if (loginModal) loginModal.style.display = 'flex';
+    window.location.reload();
+  };
+
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.handleClientLogout();
     });
   }
 
