@@ -1,3 +1,31 @@
+// Global Logout Handler — defined at top level for instant availability
+window.handleClientLogout = async function() {
+  console.log('[CLIENT AUTH] Logging out session...');
+  try {
+    const token = localStorage.getItem('orchestrator_session_token');
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': token
+        }
+      }).catch(() => {});
+    }
+  } catch (e) {}
+
+  localStorage.removeItem('orchestrator_session_token');
+  localStorage.removeItem('orchestrator_session_data');
+  localStorage.clear();
+  sessionStorage.clear();
+
+  const loginModal = document.getElementById('clientLoginModal');
+  if (loginModal) loginModal.style.display = 'flex';
+  
+  // Reload cleanly to reset all background intervals and unauthenticated state
+  window.location.href = '/';
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   // Elements
   const backendStatusBadge = document.getElementById('backendStatusBadge');
@@ -243,30 +271,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-
-  // Logout Button Handler
-  window.handleClientLogout = async function() {
-    const token = localStorage.getItem('orchestrator_session_token');
-    if (token) {
-      try {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Session-Token': token
-          }
-        });
-      } catch (e) {}
-    }
-    localStorage.removeItem('orchestrator_session_token');
-    localStorage.removeItem('orchestrator_session_data');
-    localStorage.clear();
-    sessionStorage.clear();
-    currentSession = null;
-    const loginModal = document.getElementById('clientLoginModal');
-    if (loginModal) loginModal.style.display = 'flex';
-    window.location.reload();
-  };
 
   const logoutBtn = document.getElementById('logoutBtn');
   if (logoutBtn) {
