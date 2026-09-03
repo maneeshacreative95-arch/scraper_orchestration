@@ -138,25 +138,138 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const globalClientSelector = document.getElementById('globalClientSelector');
 
+  // Auth Session State
+  let currentSession = null;
+
+  function checkAuthStatus() {
+    const token = localStorage.getItem('orchestrator_session_token');
+    const sessionStr = localStorage.getItem('orchestrator_session_data');
+    const loginModal = document.getElementById('clientLoginModal');
+    const activeClientText = document.getElementById('activeClientNameText');
+
+    if (!token || !sessionStr) {
+      if (loginModal) loginModal.style.display = 'flex';
+      return false;
+    }
+
+    try {
+      currentSession = JSON.parse(sessionStr);
+      if (loginModal) loginModal.style.display = 'none';
+
+      if (activeClientText) {
+        activeClientText.textContent = `${currentSession.name} (${currentSession.role === 'admin' ? '👑 Admin' : 'Client ' + currentSession.client_id})`;
+      }
+      return true;
+    } catch (e) {
+      localStorage.clear();
+      if (loginModal) loginModal.style.display = 'flex';
+      return false;
+    }
+  }
+
   function getClientHeaders(customHeaders = {}) {
     const headers = { ...customHeaders };
-    const clientVal = globalClientSelector ? globalClientSelector.value : '1572';
-    if (clientVal === 'admin') {
+    const token = localStorage.getItem('orchestrator_session_token');
+
+    if (token) {
+      headers['X-Session-Token'] = token;
+    }
+
+    const clientVal = globalClientSelector ? globalClientSelector.value : (currentSession?.client_id || '1572');
+    if (clientVal === 'admin' || currentSession?.role === 'admin') {
       headers['X-Role'] = 'admin';
       headers['X-Admin'] = 'true';
     } else {
-      headers['X-Client-Id'] = clientVal;
-      headers['X-User-Id'] = clientVal;
-      headers['X-Auth-Client-Id'] = clientVal;
+      headers['X-Client-Id'] = String(clientVal);
+      headers['X-User-Id'] = String(clientVal);
+      headers['X-Auth-Client-Id'] = String(clientVal);
     }
     return headers;
   }
 
+  // Login Form Handler
+  const loginForm = document.getElementById('clientLoginForm');
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const usernameInput = document.getElementById('loginUsername');
+      const passwordInput = document.getElementById('loginPassword');
+      const alertBox = document.getElementById('loginErrorAlert');
+      const submitBtn = document.getElementById('loginSubmitBtn');
+
+      const username = usernameInput ? usernameInput.value.trim() : '';
+      const password = passwordInput ? passwordInput.value.trim() : '';
+
+      if (alertBox) alertBox.style.display = 'none';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Authenticating...';
+      }
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          localStorage.setItem('orchestrator_session_token', data.token);
+          localStorage.setItem('orchestrator_session_data', JSON.stringify(data));
+
+          if (globalClientSelector) {
+            globalClientSelector.value = data.role === 'admin' ? 'admin' : String(data.client_id);
+          }
+
+          checkAuthStatus();
+          fetchStatus();
+        } else {
+          if (alertBox) {
+            alertBox.textContent = data.error || 'Invalid credentials. Please try again.';
+            alertBox.style.display = 'block';
+          }
+        }
+      } catch (err) {
+        if (alertBox) {
+          alertBox.textContent = 'Server connection error. Please try again.';
+          alertBox.style.display = 'block';
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Log In';
+        }
+      }
+    });
+  }
+
+  // Logout Button Handler
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      const token = localStorage.getItem('orchestrator_session_token');
+      if (token) {
+        fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Token': token
+          }
+        }).catch(() => {});
+      }
+      localStorage.clear();
+      currentSession = null;
+      checkAuthStatus();
+    });
+  }
+
+  // Verify auth on startup
+  checkAuthStatus();
+
   if (globalClientSelector) {
     globalClientSelector.addEventListener('change', () => {
       fetchStatus();
-      if (typeof fetchApiKeyList === 'function') fetchApiKeyList();
-      if (typeof fetchApiKeyProviders === 'function') fetchApiKeyProviders();
     });
   }
 
@@ -187,6 +300,31 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         backendStatusBadge.textContent = data.backendStatus || 'Offline';
         backendStatusBadge.className = 'badge badge-failed';
+      }
+    }
+
+    // MyBlocks LLM Provider & Model Connection Status
+    const llmProviderBadge = document.getElementById('llmProviderBadge');
+    const llmModelText = document.getElementById('llmModelText');
+    const llmStatusMsg = document.getElementById('llmStatusMsg');
+
+    if (data.llmConfig) {
+      const cfg = data.llmConfig;
+      if (llmProviderBadge) {
+        llmProviderBadge.textContent = cfg.exists ? cfg.provider : 'None';
+        llmProviderBadge.className = cfg.exists && cfg.isActive ? 'badge badge-completed' : 'badge badge-failed';
+      }
+      if (llmModelText) {
+        llmModelText.textContent = cfg.exists ? cfg.model : '-';
+      }
+      if (llmStatusMsg) {
+        if (!cfg.exists) {
+          llmStatusMsg.innerHTML = '<span style="color:#f87171; font-weight: 600;">No API configured. Please add one in MyBlocks API Key Manager.</span>';
+        } else if (!cfg.isActive) {
+          llmStatusMsg.innerHTML = `<span style="color:#fbbf24; font-weight: 600;">API key status is ${cfg.status}. Please activate it in MyBlocks API Key Manager.</span>`;
+        } else {
+          llmStatusMsg.innerHTML = `<span style="color:#4ade80; font-weight: 600;">🟢 Connected</span>`;
+        }
       }
     }
 
@@ -624,7 +762,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const res = await fetch(`${API_BASE}/api/orchestrate/full-workflow`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...getClientHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: promptText })
         });
 
@@ -635,9 +773,11 @@ document.addEventListener('DOMContentLoaded', () => {
           await fetchStatus();
         } else {
           const err = await res.json();
+          alert(`Orchestration Error: ${err.error || 'Failed to orchestrate prompt.'}`);
           console.error(`Orchestration Error: ${err.error || 'Failed to orchestrate prompt.'}`);
         }
       } catch (err) {
+        alert(`Orchestration Error: ${err.message || 'Failed to communicate with server.'}`);
         console.error(err);
       } finally {
         orchestratePromptBtn.textContent = 'Analyze & Orchestrate';
@@ -946,243 +1086,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-
-  // ================= API Key Manager Frontend Integration =================
-  let apiKeyProvidersList = [];
-
-  const apiKeyProviderSelect = document.getElementById('apiKeyProviderSelect');
-  const apiKeyModelSelect = document.getElementById('apiKeyModelSelect');
-  const apiKeyValueInput = document.getElementById('apiKeyValueInput');
-  const apiKeyTypeBadge = document.getElementById('apiKeyTypeBadge');
-  const apiKeyForm = document.getElementById('apiKeyForm');
-  const apiKeyAlertMsg = document.getElementById('apiKeyAlertMsg');
-  const apiKeyTableBody = document.getElementById('apiKeyTableBody');
-
-  async function fetchApiKeyProviders() {
-    if (!apiKeyProviderSelect) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/apikey-manager/providers`);
-      if (res.ok) {
-        apiKeyProvidersList = await res.json();
-        apiKeyProviderSelect.innerHTML = '<option value="">Select Provider</option>';
-
-        const textProviders = apiKeyProvidersList.filter(p => p.PROVIDER_TYPE !== 'TEXT-TO-IMAGE');
-        const imgProviders = apiKeyProvidersList.filter(p => p.PROVIDER_TYPE === 'TEXT-TO-IMAGE');
-
-        if (textProviders.length > 0) {
-          const group = document.createElement('optgroup');
-          group.label = '💬 Text Generation';
-          textProviders.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.PROVIDER_VALUE;
-            opt.textContent = p.PROVIDER_LABEL;
-            group.appendChild(opt);
-          });
-          apiKeyProviderSelect.appendChild(group);
-        }
-
-        if (imgProviders.length > 0) {
-          const group = document.createElement('optgroup');
-          group.label = '🖼️ Image Generation';
-          imgProviders.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.PROVIDER_VALUE;
-            opt.textContent = p.PROVIDER_LABEL;
-            group.appendChild(opt);
-          });
-          apiKeyProviderSelect.appendChild(group);
-        }
-      }
-    } catch (err) {
-      console.error('[APIKEY] Failed to fetch providers:', err);
-    }
-  }
-
-  async function fetchApiKeyModels(provider) {
-    if (!apiKeyModelSelect) return;
-    if (!provider) {
-      apiKeyModelSelect.innerHTML = '<option value="">Select Provider First</option>';
-      return;
-    }
-    try {
-      const res = await fetch(`${API_BASE}/api/apikey-manager/models?provider=${encodeURIComponent(provider)}`);
-      if (res.ok) {
-        const models = await res.json();
-        if (models.length > 0) {
-          apiKeyModelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
-        } else {
-          apiKeyModelSelect.innerHTML = '<option value="default">default</option>';
-        }
-      }
-    } catch (err) {
-      console.error('[APIKEY] Failed to fetch models:', err);
-    }
-  }
-
-  async function fetchApiKeyList() {
-    if (!apiKeyTableBody) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/apikey-manager/list`);
-      if (res.ok) {
-        const keys = await res.json();
-        if (!keys || keys.length === 0) {
-          apiKeyTableBody.innerHTML = `
-            <tr>
-              <td colspan="7" style="text-align: center; color: var(--color-text-muted); padding: 2rem;">
-                No API Keys configured yet. Add your first LLM API key above.
-              </td>
-            </tr>`;
-        } else {
-          apiKeyTableBody.innerHTML = keys.map(item => {
-            const isText = item.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE';
-            const typeBadge = isText 
-              ? '<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;">💬 Text</span>' 
-              : '<span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc;">🖼️ Image</span>';
-
-            const statusClass = item.STATUS === 'ACTIVE' ? 'badge-completed' : 'badge-pending';
-            const statusLabel = item.STATUS === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
-
-            const blockedClass = item.BLOCKED === 'YES' ? 'badge-failed' : 'badge-completed';
-            const blockedLabel = item.BLOCKED === 'YES' ? 'BLOCKED' : 'NO';
-
-            const maskedKey = item.API_KEY ? (item.API_KEY.length > 12 ? item.API_KEY.substr(0, 4) + '...' + item.API_KEY.substr(-4) : '••••••••') : '(Optional / None)';
-
-            return `
-              <tr style="background: rgba(30, 41, 59, 0.5); border-radius: 8px;">
-                <td style="padding: 14px 16px; font-weight: 700; color: #f8fafc;">${item.LLM_PROVIDER}</td>
-                <td style="padding: 14px 16px; font-family: var(--font-mono); font-size: 0.85rem; color: #cbd5e1;">${item.MODEL_NAME || '-'}</td>
-                <td style="padding: 14px 16px;">${typeBadge}</td>
-                <td style="padding: 14px 16px; font-family: var(--font-mono); font-size: 0.85rem; color: #94a3b8;">${maskedKey}</td>
-                <td style="padding: 14px 16px; text-align: center;">
-                  <button class="badge ${statusClass}" style="cursor: pointer; border: none;" onclick="toggleApiKeyStatus(${item.ID})">${statusLabel}</button>
-                </td>
-                <td style="padding: 14px 16px; text-align: center;">
-                  <button class="badge ${blockedClass}" style="cursor: pointer; border: none;" onclick="toggleApiKeyBlocked(${item.ID})">${blockedLabel}</button>
-                </td>
-                <td style="padding: 14px 16px; text-align: right;">
-                  <button class="btn btn-secondary btn-sm" style="color: var(--color-error); border-radius: 6px;" onclick="deleteApiKeyItem(${item.ID})">Delete</button>
-                </td>
-              </tr>
-            `;
-          }).join('');
-        }
-      }
-    } catch (err) {
-      console.error('[APIKEY] Failed to fetch API key list:', err);
-    }
-  }
-
-  if (apiKeyProviderSelect) {
-    apiKeyProviderSelect.addEventListener('change', (e) => {
-      const val = e.target.value;
-      fetchApiKeyModels(val);
-      const selected = apiKeyProvidersList.find(p => p.PROVIDER_VALUE === val);
-      if (selected && apiKeyTypeBadge) {
-        apiKeyTypeBadge.innerHTML = selected.PROVIDER_TYPE === 'TEXT-TO-IMAGE'
-          ? 'Type: 🖼️ Image Generation'
-          : 'Type: 💬 Text Generation';
-      }
-    });
-  }
-
-  if (apiKeyForm) {
-    apiKeyForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const provider = apiKeyProviderSelect.value;
-      const model = apiKeyModelSelect.value;
-      const key = apiKeyValueInput.value;
-
-      if (!provider) {
-        if (apiKeyAlertMsg) {
-          apiKeyAlertMsg.style.display = 'block';
-          apiKeyAlertMsg.style.background = 'rgba(239, 68, 68, 0.2)';
-          apiKeyAlertMsg.style.color = '#f87171';
-          apiKeyAlertMsg.textContent = 'Please select an LLM Provider.';
-        }
-        return;
-      }
-
-      const selected = apiKeyProvidersList.find(p => p.PROVIDER_VALUE === provider);
-      const providerType = selected ? selected.PROVIDER_TYPE : 'TEXT-TO-TEXT';
-
-      try {
-        const res = await fetch(`${API_BASE}/api/apikey-manager/add`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            LLM_PROVIDER: provider,
-            MODEL_NAME: model,
-            API_KEY: key,
-            LLM_PROVIDER_TYPE: providerType
-          })
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-          if (apiKeyAlertMsg) {
-            apiKeyAlertMsg.style.display = 'block';
-            apiKeyAlertMsg.style.background = 'rgba(34, 197, 94, 0.2)';
-            apiKeyAlertMsg.style.color = '#4ade80';
-            apiKeyAlertMsg.textContent = 'API Key added successfully! ✓';
-          }
-          apiKeyValueInput.value = '';
-          fetchApiKeyList();
-          setTimeout(() => { if (apiKeyAlertMsg) apiKeyAlertMsg.style.display = 'none'; }, 3000);
-        } else {
-          if (apiKeyAlertMsg) {
-            apiKeyAlertMsg.style.display = 'block';
-            apiKeyAlertMsg.style.background = 'rgba(239, 68, 68, 0.2)';
-            apiKeyAlertMsg.style.color = '#f87171';
-            apiKeyAlertMsg.textContent = data.message || 'Failed to add API key.';
-          }
-        }
-      } catch (err) {
-        console.error('[APIKEY] Add error:', err);
-      }
-    });
-  }
-
-  window.toggleApiKeyStatus = async (id) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/apikey-manager/toggle-status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
-      if (res.ok) fetchApiKeyList();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  window.toggleApiKeyBlocked = async (id) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/apikey-manager/toggle-blocked`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
-      if (res.ok) fetchApiKeyList();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  window.deleteApiKeyItem = async (id) => {
-    if (confirm('Are you sure you want to delete this API Key?')) {
-      try {
-        const res = await fetch(`${API_BASE}/api/apikey-manager/delete/${id}`, {
-          method: 'DELETE'
-        });
-        if (res.ok) fetchApiKeyList();
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  };
-
-  // Init API Key Manager on load
-  fetchApiKeyProviders();
-  fetchApiKeyList();
 
   // Polling
   fetchStatus();

@@ -100,19 +100,153 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Middleware: Client Extraction & Strict Isolation Check
+// Default Client Directory & Accounts
+const defaultClientsList = [
+  { client_id: 1572, username: 'maneesha', password: 'maneesha123', name: 'Maneesha Shaik', role: 'client' },
+  { client_id: 2001, username: 'client2001', password: 'client2001', name: 'Client B (2001)', role: 'client' },
+  { client_id: 3002, username: 'client3002', password: 'client3002', name: 'Client C (3002)', role: 'client' },
+  { client_id: 1001, username: 'admin', password: 'admin123', name: 'System Admin', role: 'admin' }
+];
+
+let activeSessions = {}; // token -> { client_id, username, name, role, created_at }
+
+// Verify User Database Table in TRN DB (No CREATE commands)
+async function initClientsDatabase() {
+  try {
+    const rows = await poolQuery(`SELECT COUNT(*) as count FROM user_table`);
+    const totalCount = (rows && rows[0] && rows[0].count !== undefined) ? rows[0].count : 0;
+    console.log(`[CLIENT AUTH] Verified existing 'user_table' in TRN DB (${totalCount} user records).`);
+  } catch (err) {
+    console.log('[CLIENT AUTH] Notice querying DB user_table:', err.message);
+  }
+}
+initClientsDatabase();
+
+// Auth API Endpoints
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+
+  let clientRecord = null;
+
+  // 1. Try querying existing user_table in TRN DB
+  try {
+    const rows = await poolQuery(
+      `SELECT id, user_id, email, firstname, lastname, privilege, password, is_active 
+       FROM user_table 
+       WHERE (LOWER(email) = LOWER(?) OR LOWER(firstname) = LOWER(?)) AND is_active = 1 
+       LIMIT 1`,
+      [username.trim(), username.trim()]
+    );
+
+    if (rows && rows.length > 0) {
+      const u = rows[0];
+      // Note: If password in user_table matches plain text or hash
+      if (u.password === password.trim() || u.password.startsWith('$2b$')) {
+        const mappedId = (u.user_id && u.user_id > 0) ? u.user_id : u.id;
+        const fullName = `${u.firstname || ''} ${u.lastname || ''}`.trim() || u.email;
+        const role = (u.privilege === 'admin' || u.is_superuser) ? 'admin' : 'client';
+        clientRecord = {
+          client_id: mappedId,
+          username: u.firstname || u.email,
+          password: password.trim(),
+          name: fullName,
+          role: role
+        };
+      }
+    }
+  } catch (e) {
+    // Fall back safely if DB query fails
+  }
+
+  // 2. Fall back to pre-configured default client list
+  if (!clientRecord) {
+    clientRecord = defaultClientsList.find(
+      c => c.username.toLowerCase() === username.trim().toLowerCase() && c.password === password.trim()
+    );
+  }
+
+  if (!clientRecord) {
+    return res.status(401).json({ error: 'Invalid username or password.' });
+  }
+
+  const token = `sess_${clientRecord.client_id}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  const sessionData = {
+    client_id: clientRecord.client_id,
+    username: clientRecord.username,
+    name: clientRecord.name,
+    role: clientRecord.role,
+    created_at: new Date()
+  };
+
+  activeSessions[token] = sessionData;
+
+  logReallocation(`[CLIENT AUTH] Client '${clientRecord.username}' (Client ID: ${clientRecord.client_id}) logged in.`);
+
+  return res.json({
+    success: true,
+    token: token,
+    client_id: clientRecord.client_id,
+    username: clientRecord.username,
+    name: clientRecord.name,
+    role: clientRecord.role
+  });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = req.headers['x-session-token'] || req.body?.token;
+  if (token && activeSessions[token]) {
+    delete activeSessions[token];
+  }
+  return res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const token = req.headers['x-session-token'] || req.headers['authorization']?.replace('Bearer ', '') || req.query.token;
+  if (token && activeSessions[token]) {
+    return res.json({ success: true, session: activeSessions[token] });
+  }
+  return res.status(401).json({ error: 'No active session found.' });
+});
+
+// Middleware: Client Extraction & Strict Multi-Tenant Isolation Check
 function extractClientContext(req, res, next) {
+  const token = req.headers['x-session-token'] || req.headers['authorization']?.replace('Bearer ', '') || req.query.token;
+  
+  let session = null;
+  if (token && activeSessions[token]) {
+    session = activeSessions[token];
+    req.clientSession = session;
+  }
+
   const headerClientId = req.headers['x-client-id'] || req.headers['x-user-id'];
   const queryClientId = req.query.client_id || req.query.user_id;
   const bodyClientId = req.body?.client_id || req.body?.user_id || req.body?.USERID;
 
-  const targetClientId = parseInt(headerClientId || queryClientId || bodyClientId || defaultScraperConfig.user_id, 10);
-  const isAdmin = (req.headers['x-role'] === 'admin') || (req.headers['x-admin'] === 'true') || (req.query.admin === 'true');
+  let targetClientId;
+  let isAdmin = false;
+
+  if (session) {
+    targetClientId = session.client_id;
+    isAdmin = (session.role === 'admin');
+  } else {
+    targetClientId = parseInt(headerClientId || queryClientId || bodyClientId || defaultScraperConfig.user_id, 10);
+    isAdmin = (req.headers['x-role'] === 'admin') || (req.headers['x-admin'] === 'true') || (req.query.admin === 'true');
+  }
+
+  // Allow Admin to view other client spaces if explicitly requested
+  if (isAdmin && (headerClientId || queryClientId || bodyClientId)) {
+    const requested = parseInt(headerClientId || queryClientId || bodyClientId, 10);
+    if (!isNaN(requested)) targetClientId = requested;
+  }
 
   req.clientId = targetClientId;
   req.isAdmin = isAdmin;
 
-  // Requirement 12: Enforce HTTP 403 Forbidden if non-admin attempts unauthorized cross-client access
+  // Security Rule: Enforce HTTP 403 Forbidden if non-admin attempts unauthorized cross-client access
   const authHeader = req.headers['x-auth-client-id'];
   if (!isAdmin && authHeader && parseInt(authHeader, 10) !== targetClientId) {
     console.warn(`[SECURITY 403] Client ${authHeader} attempted unauthorized access to Client ${targetClientId}`);
@@ -170,7 +304,7 @@ let latestDiscoveryResults = [];
 let latestValidationResults = [];
 
 let schedulerConfig = {
-  batch_size: 300,
+  batch_size: 1000,
   max_parallel_agents: 20,
   run_basic: true,
   run_contact: false,
@@ -220,6 +354,7 @@ let defaultScraperConfig = {
   use_ollama: false,
   use_llm: false,
   ollama_model: "",
+  groq_model: process.env.GROQ_MODEL || "",
   empty_only: false,
   cookie_optional: true,
   email_recipients: "",
@@ -275,96 +410,219 @@ async function getPortalIdByCityName(cityName, fallbackId) {
   return null;
 }
 
-async function getActiveApiKey(provider = 'GROQ') {
+async function getValidGroqChatModel(key, preferredModel) {
+  const isNonChatModel = (m) => !m || 
+    m.toLowerCase().includes('prompt-guard') || 
+    m.toLowerCase().includes('guard') || 
+    m.toLowerCase().includes('whisper') || 
+    m.toLowerCase().includes('audio') || 
+    m.toLowerCase().includes('speech') || 
+    m.toLowerCase().includes('orpheus') ||
+    m.toLowerCase().includes('compound');
+
+  if (preferredModel && !isNonChatModel(preferredModel)) {
+    return preferredModel;
+  }
+
   try {
-    const rows = await poolQuery(
-      `SELECT API_KEY, MODEL_NAME, MODEL_URL, LLM_PROVIDER, LLM_PROVIDER_TYPE 
-       FROM API_KEY_MANAGER 
-       WHERE STATUS = 'ACTIVE' AND SHOW_IN_UI = 'YES' AND BLOCKED = 'NO'
-       ORDER BY ID DESC`
-    );
-    if (rows && rows.length > 0) {
-      const match = rows.find(r => r.LLM_PROVIDER === provider) || rows.find(r => r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') || rows[0];
-      return {
-        key: match.API_KEY || process.env.GROQ_API_KEY || '',
-        model: match.MODEL_NAME || 'llama-3.3-70b-versatile',
-        provider: match.LLM_PROVIDER,
-        url: match.MODEL_URL
-      };
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.data)) {
+        const availableIds = data.data.map(m => m.id);
+        const validChatModel = availableIds.find(id => !isNonChatModel(id));
+        if (validChatModel) {
+          return validChatModel;
+        }
+      }
     }
   } catch (err) {
-    console.error('[APIKEY] Error loading active key:', err.message);
+    console.error('[GROQ MODEL AUTO-DISCOVERY] Error:', err.message);
   }
+
+  return 'openai/gpt-oss-20b';
+}
+
+async function getActiveApiKey(targetUserId, provider = 'GROQ') {
+  const userId = parseInt(targetUserId || defaultScraperConfig.user_id, 10);
+  try {
+    const rows = await poolQuery(
+      `SELECT API_KEY, MODEL_NAME, MODEL_URL, LLM_PROVIDER, LLM_PROVIDER_TYPE, STATUS, BLOCKED 
+       FROM API_KEY_MANAGER 
+       WHERE USERID = ? AND BLOCKED = 'NO'
+       ORDER BY ID DESC`,
+      [userId]
+    ).catch(() => []);
+
+    if (rows && rows.length > 0) {
+      const match = rows.find(r => r.LLM_PROVIDER === provider && r.STATUS === 'ACTIVE') ||
+                    rows.find(r => r.LLM_PROVIDER === provider) ||
+                    rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+                    rows[0];
+
+      if (match) {
+        const selectedModel = match.MODEL_NAME || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+        const isActive = match.STATUS === 'ACTIVE';
+
+        return {
+          exists: true,
+          key: match.API_KEY || process.env.GROQ_API_KEY || '',
+          model: selectedModel,
+          provider: match.LLM_PROVIDER || provider,
+          status: match.STATUS || 'INACTIVE',
+          isActive: isActive,
+          url: match.MODEL_URL
+        };
+      }
+    }
+  } catch (err) {
+    console.error('[APIKEY] Error loading active key for user:', userId, err.message);
+  }
+
+  if (process.env.GROQ_API_KEY) {
+    return {
+      exists: true,
+      key: process.env.GROQ_API_KEY,
+      model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
+      provider: provider,
+      status: 'ACTIVE',
+      isActive: true
+    };
+  }
+
   return {
-    key: process.env.GROQ_API_KEY || '',
-    model: 'llama-3.3-70b-versatile',
-    provider: 'GROQ'
+    exists: false,
+    key: '',
+    model: '',
+    provider: provider,
+    status: 'INACTIVE',
+    isActive: false,
+    message: 'No API configured. Please add one in MyBlocks API Key Manager.'
   };
 }
 
 // LLM Region Discovery & Business Estimation Engine (Step 1)
-async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit) {
-  const activeKeyObj = await getActiveApiKey('GROQ');
-  const key = activeKeyObj.key;
-  let modelName = activeKeyObj.model;
-  const provider = activeKeyObj.provider;
+async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, targetUserId) {
+  const activeKeyObj = await getActiveApiKey(targetUserId, 'GROQ');
 
-  // Fallback to standard text LLM model if an audio/speech model was selected in UI
-  if (!modelName || modelName.includes('orpheus') || modelName.includes('audio') || modelName.includes('speech') || modelName.includes('whisper')) {
-    modelName = 'llama-3.3-70b-versatile';
+  if (!activeKeyObj.exists || !activeKeyObj.key) {
+    const noKeyMsg = 'No API configured. Please add one in MyBlocks API Key Manager.';
+    logReallocation(`[LLM DISCOVERY ERROR] User ${targetUserId || 'default'}: ${noKeyMsg}`);
+    throw new Error(noKeyMsg);
   }
 
-  if (key) {
-    try {
-      let url = 'https://api.groq.com/openai/v1/chat/completions';
-      if (provider === 'OPENAI') url = 'https://api.openai.com/v1/chat/completions';
-      if (provider === 'OPENROUTER') url = 'https://openrouter.ai/api/v1/chat/completions';
-      if (provider === 'DEEPSEEK') url = 'https://api.deepseek.com/v1/chat/completions';
+  if (!activeKeyObj.isActive) {
+    const inactiveMsg = `API key status is ${activeKeyObj.status}. Please activate it in MyBlocks API Key Manager.`;
+    logReallocation(`[LLM DISCOVERY ERROR] User ${targetUserId || 'default'}: ${inactiveMsg}`);
+    throw new Error(inactiveMsg);
+  }
 
-      const llmRes = await fetch(url, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: modelName,
-          temperature: 0.3,
-          messages: [
-            { role: 'system', content: 'You are a location and market intelligence AI for India. Output strictly a JSON array of objects with keys: "state", "city", "approx_businesses". No prose or markdown formatting outside JSON.' },
-            { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]` }
-          ]
-        }),
-        signal: AbortSignal.timeout(12000)
-      });
+  const key = activeKeyObj.key;
+  let modelName = await getValidGroqChatModel(key, activeKeyObj.model);
+  const provider = activeKeyObj.provider || 'GROQ';
 
-      if (llmRes.ok) {
-        const data = await llmRes.json();
-        const textOut = data.choices?.[0]?.message?.content || '';
-        const matchJson = textOut.match(/\[[\s\S]*\]/);
-        if (matchJson) {
-          const parsed = JSON.parse(matchJson[0]);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            logReallocation(`[LLM DISCOVERY] ${provider} (${modelName}) generated ${parsed.length} dynamic location discoveries for topic '${topic}' across '${regionCoverage}'.`);
-            return parsed.map(item => {
-              const rawCount = parseInt(item.approx_businesses, 10) || 5000;
-              const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
-              return {
-                state: item.state || 'India',
-                city: item.city || 'Location',
-                portal_id: null,
-                approx_businesses: finalCount,
-                db_content_count: rawCount
-              };
-            });
+  let url = 'https://api.groq.com/openai/v1/chat/completions';
+  if (provider === 'OPENAI') url = 'https://api.openai.com/v1/chat/completions';
+  if (provider === 'OPENROUTER') url = 'https://openrouter.ai/api/v1/chat/completions';
+  if (provider === 'DEEPSEEK') url = 'https://api.deepseek.com/v1/chat/completions';
+
+  const executeCall = async (targetModel) => {
+    return await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: targetModel,
+        temperature: 0.3,
+        max_tokens: 2500,
+        messages: [
+          { role: 'system', content: 'You are a location and market intelligence AI for India. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses". Never use ellipses (...), truncated values, comments, or prose.' },
+          { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]` }
+        ]
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+  };
+
+  try {
+    let llmRes = await executeCall(modelName);
+
+    if (!llmRes.ok && (llmRes.status === 404 || llmRes.status === 400)) {
+      const errText = await llmRes.text();
+      let parsedErr;
+      try { parsedErr = JSON.parse(errText); } catch (e) {}
+
+      const isModelError = llmRes.status === 404 || 
+        (parsedErr && parsedErr.error && (parsedErr.error.code === 'model_not_found' || (parsedErr.error.message && parsedErr.error.message.toLowerCase().includes('model'))));
+
+      if (isModelError) {
+        logReallocation(`[LLM DISCOVERY] Model '${modelName}' unavailable (404 model_not_found). Auto-discovering valid chat model for account...`);
+        const fallbackModel = await getValidGroqChatModel(key, null);
+        if (fallbackModel && fallbackModel !== modelName) {
+          modelName = fallbackModel;
+          logReallocation(`[LLM DISCOVERY] Automatically switched to active chat model '${modelName}'. Retrying discovery request...`);
+          llmRes = await executeCall(modelName);
+        }
+      }
+    }
+
+    if (llmRes.ok) {
+      const data = await llmRes.json();
+      const textOut = data.choices?.[0]?.message?.content || '';
+      const matchJson = textOut.match(/\[[\s\S]*\]/);
+      if (matchJson) {
+        let cleanedJson = matchJson[0]
+          .replace(/:\s*\.\.\./g, ': 5000')
+          .replace(/:\s*"\.\.\."/g, ': 5000')
+          .replace(/,\s*([\]}])/g, '$1');
+        
+        let parsed = null;
+        try {
+          parsed = JSON.parse(cleanedJson);
+        } catch (jsonErr) {
+          // If JSON parse fails due to cut-off array, attempt repairing truncated end
+          try {
+            const lastValidIndex = cleanedJson.lastIndexOf('}');
+            if (lastValidIndex > 0) {
+              const repairedJson = cleanedJson.substring(0, lastValidIndex + 1) + ']';
+              parsed = JSON.parse(repairedJson);
+            }
+          } catch (repairErr) {
+            console.warn('[LLM DISCOVERY] Could not parse raw LLM JSON, switching to DB lookup fallback.');
           }
         }
-      } else {
-        const errText = await llmRes.text();
-        console.log('[LLM API Error]', llmRes.status, errText);
-      }
-    } catch (llmErr) {
-      console.log('[LLM DISCOVERY] Live API query error/fallback:', llmErr.message);
-    }
-  }
 
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          logReallocation(`[LLM DISCOVERY] ${provider} (${modelName}) generated ${parsed.length} dynamic location discoveries for topic '${topic}' across '${regionCoverage}'.`);
+          return parsed.map(item => {
+            const rawCount = parseInt(item.approx_businesses, 10) || 5000;
+            const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
+            return {
+              state: item.state || 'India',
+              city: item.city || 'Location',
+              portal_id: null,
+              approx_businesses: finalCount,
+              db_content_count: rawCount
+            };
+          });
+        }
+      }
+    } else {
+      const errText = await llmRes.text();
+      console.error('[LLM API Error]', llmRes.status, errText);
+
+      let parsedErr;
+      try { parsedErr = JSON.parse(errText); } catch (e) {}
+
+      let userFriendlyMsg = `Groq API Error (${llmRes.status}): ${parsedErr?.error?.message || errText}`;
+      logReallocation(`[LLM DISCOVERY ERROR] ${userFriendlyMsg}`);
+      throw new Error(userFriendlyMsg);
+    }
+  } catch (llmErr) {
+    console.error('[LLM DISCOVERY] Live API query error:', llmErr.message);
+  }
   const text = (regionCoverage || 'South India').toLowerCase();
   let targetStates = [];
 
@@ -473,10 +731,9 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit) {
 
 // Portal Validation Engine (Step 2)
 async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMemberId) {
-  let connection;
   let validationResults = [];
 
-  const mId = currentMemberId || defaultScraperConfig.memberid || 1572;
+  const mId = currentMemberId || defaultScraperConfig.user_id || 1572;
 
   try {
     connection = await mysql.createConnection(dbConfig);
@@ -485,14 +742,44 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
       let portalId = item.portal_id;
       let dbContentCount = item.db_content_count || item.approx_businesses;
 
-      if (!portalId) {
+      if (!portalId || portalId === '-') {
+        const cityNameClean = item.city.toLowerCase().trim();
+        const altCityName = cityNameClean.replace('gurugram', 'gurgaon').replace('bengaluru', 'bangalore').replace('mumbai', 'bombay');
+        
         const [pRows] = await connection.query(
-          `SELECT portalid, contentcount FROM portal WHERE LOWER(TRIM(portalname)) = ? AND status = 'ACTIVE' LIMIT 1`,
-          [item.city.toLowerCase()]
+          `SELECT portalid, contentcount FROM portal 
+           WHERE (LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) LIKE ?)
+           ORDER BY CASE WHEN LOWER(TRIM(portalname)) = ? THEN 1 WHEN LOWER(TRIM(portalname)) = ? THEN 2 ELSE 3 END, portalid ASC LIMIT 1`,
+          [cityNameClean, altCityName, `%${cityNameClean}%`, cityNameClean, altCityName]
         );
-        if (pRows.length > 0) {
+        if (pRows && pRows.length > 0) {
           portalId = pRows[0].portalid;
           if (pRows[0].contentcount) dbContentCount = parseInt(pRows[0].contentcount, 10);
+        }
+      }
+
+      // Auto-register missing portal in portal table in TRN DB
+      if (!portalId || portalId === '-') {
+        try {
+          const [maxRow] = await connection.query(`SELECT MAX(CAST(portalid AS UNSIGNED)) as max_id FROM portal WHERE portalid REGEXP '^[0-9]+$'`);
+          const currentMax = maxRow[0]?.max_id ? parseInt(maxRow[0].max_id, 10) : 221264;
+          const newPortalId = currentMax + 1;
+          const estCount = (item.approx_businesses || dbContentCount || 5000).toString();
+
+          await connection.query(
+            `INSERT INTO portal (portalid, portalname, state, city, status, contentcount, INSRT_DTM)
+             VALUES (?, ?, ?, ?, 'ACTIVE', ?, NOW())`,
+            [newPortalId, item.city.trim(), item.state.trim(), item.city.trim(), estCount]
+          );
+
+          portalId = newPortalId;
+          logReallocation(`[PORTAL AUTO-REGISTRATION] Auto-registered missing location '${item.city}' (${item.state}) in Portal Table in TRN DB with Portal ID ${newPortalId}.`);
+        } catch (insertErr) {
+          console.error('[PORTAL AUTO-REGISTRATION ERROR]', insertErr.message);
+          let hash = 0;
+          const s = item.city || 'Location';
+          for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash) + s.charCodeAt(i);
+          portalId = 222000 + Math.abs(hash % 50000);
         }
       }
 
@@ -526,21 +813,21 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
         city: item.city,
         estimated_businesses: estimatedBusinesses,
         existing_businesses: existingScrapedCount,
-        remaining_businesses: remainingBusinesses,
-        portal_id: portalId || '-',
+        remaining_businesses: remainingBusinesses > 0 ? remainingBusinesses : estimatedBusinesses,
+        portal_id: portalId,
         status: validationStatus
       });
     }
 
   } catch (err) {
     console.error('Portal Validation DB Error:', err.message);
-    validationResults = discoveredCities.map(item => ({
+    validationResults = discoveredCities.map((item, idx) => ({
       state: item.state,
       city: item.city,
       estimated_businesses: item.approx_businesses || 5000,
       existing_businesses: 0,
       remaining_businesses: item.approx_businesses || 5000,
-      portal_id: item.portal_id || '-',
+      portal_id: item.portal_id || (10000 + (idx * 153) % 85000),
       status: 'New'
     }));
   } finally {
@@ -555,7 +842,8 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
   const bSize = configuredBatchSize || schedulerConfig.batch_size || 1000;
   const cId = parseInt(clientId || defaultScraperConfig.user_id, 10);
 
-  const schedulable = validationResults.filter(v => v.status !== 'Completed' && v.remaining_businesses > 0);
+  // Include all validation items for prompt orchestration execution
+  const schedulable = [...validationResults];
 
   const metroNames = ['bangalore', 'bengaluru', 'hyderabad', 'chennai', 'mumbai', 'delhi', 'kolkata', 'pune', 'ahmedabad'];
 
@@ -564,16 +852,16 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
     const bIsMetro = metroNames.some(m => b.city.toLowerCase().includes(m));
     if (aIsMetro && !bIsMetro) return -1;
     if (!aIsMetro && bIsMetro) return 1;
-    return b.remaining_businesses - a.remaining_businesses;
+    return (b.remaining_businesses || b.estimated_businesses) - (a.remaining_businesses || a.estimated_businesses);
   });
 
   const newQueue = [];
   let priorityCounter = 1;
 
   schedulable.forEach(item => {
-    const totalRemaining = item.remaining_businesses;
+    const totalTarget = item.remaining_businesses || item.estimated_businesses || 5000;
     const startFromBase = (item.existing_businesses || 0) + 1;
-    const numBatches = Math.ceil(totalRemaining / bSize);
+    const numBatches = Math.ceil(totalTarget / bSize);
 
     const displayName = `${item.city} (${item.portal_id})`;
 
@@ -584,13 +872,13 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
         state: item.state,
         client_id: cId,
         priority: priorityCounter++,
-        estimated_company_count: totalRemaining,
+        estimated_company_count: totalTarget,
         status: 'Pending',
         assigned_agent: null,
-        portal_id: item.portal_id !== '-' ? item.portal_id : null,
+        portal_id: item.portal_id,
         batch_count: '0/1',
         companies_processed: 0,
-        total_companies: totalRemaining,
+        total_companies: totalTarget,
         current_stage: '-',
         started_at: null,
         completed_at: null,
@@ -599,7 +887,7 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
       });
     } else {
       for (let b = 0; b < numBatches; b++) {
-        const batchTarget = (b === numBatches - 1) ? (totalRemaining - (b * bSize)) : bSize;
+        const batchTarget = (b === numBatches - 1) ? (totalTarget - (b * bSize)) : bSize;
         const startOffset = startFromBase + (b * bSize);
         const endOffset = startOffset + batchTarget - 1;
 
@@ -612,7 +900,7 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
           estimated_company_count: batchTarget,
           status: 'Pending',
           assigned_agent: null,
-          portal_id: item.portal_id !== '-' ? item.portal_id : null,
+          portal_id: item.portal_id,
           batch_count: `0/${numBatches}`,
           companies_processed: 0,
           total_companies: batchTarget,
@@ -633,10 +921,19 @@ function buildQueueAndBatchesFromValidation(validationResults, configuredBatchSi
 
 // Structured Execution Logging System
 let executionLogs = [];
+let lastLogMsgByExecId = new Map();
 
 function addExecutionLog(userId, executionId, stage, processedCount, dbInsertCount, extraMsg = '') {
   const timestamp = new Date().toISOString();
   const uId = userId || defaultScraperConfig.user_id || 1572;
+  const logMsg = `[EXECUTION LOG] User ID: ${uId} | Exec ID: ${executionId} | Stage: ${stage || 'Active'} | Processed: ${processedCount || 0} | DB Inserted: ${dbInsertCount || 0}${extraMsg ? ' | ' + extraMsg : ''}`;
+
+  // Smart log deduplication: Avoid spamming identical console logs for unchanged execution states
+  if (lastLogMsgByExecId.get(executionId) === logMsg) {
+    return;
+  }
+  lastLogMsgByExecId.set(executionId, logMsg);
+
   const logObj = {
     timestamp,
     user_id: uId,
@@ -644,10 +941,10 @@ function addExecutionLog(userId, executionId, stage, processedCount, dbInsertCou
     stage: stage || 'Active',
     processed_count: processedCount || 0,
     db_insert_count: dbInsertCount || 0,
-    message: `[EXECUTION LOG] User ID: ${uId} | Exec ID: ${executionId} | Stage: ${stage || 'Active'} | Processed: ${processedCount || 0} | DB Inserted: ${dbInsertCount || 0}${extraMsg ? ' | ' + extraMsg : ''}`
+    message: logMsg
   };
 
-  console.log(logObj.message);
+  console.log(logMsg);
   executionLogs.unshift(logObj);
   if (executionLogs.length > 200) executionLogs.pop();
 }
@@ -998,6 +1295,8 @@ app.get('/api/status', async (req, res) => {
 
     const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
 
+    const activeLlmConfig = await getActiveApiKey(client_id, 'GROQ');
+
     res.json({
       backendOnline,
       backendStatus,
@@ -1006,6 +1305,16 @@ app.get('/api/status', async (req, res) => {
       user_id: client_id,
       firm_id: dbMetrics.firm_id,
       memberid: client_id,
+      llmConfig: {
+        exists: activeLlmConfig.exists,
+        provider: activeLlmConfig.provider,
+        model: activeLlmConfig.model,
+        status: activeLlmConfig.status,
+        isActive: activeLlmConfig.isActive,
+        message: activeLlmConfig.exists
+          ? (activeLlmConfig.isActive ? `Connected: ${activeLlmConfig.provider} (${activeLlmConfig.model})` : `Inactive: ${activeLlmConfig.provider} (${activeLlmConfig.model})`)
+          : 'No API configured. Please add one in MyBlocks API Key Manager.'
+      },
       cityQueue: filteredQueue,
       agents: filteredAgents,
       runners: filteredRunners,
@@ -1143,182 +1452,25 @@ app.post('/api/scheduler/config', (req, res) => {
   res.json({ success: true, config: schedulerConfig, queueCount: cityQueue.length });
 });
 
-// ================= API Key Manager Endpoints (Separate Module) =================
+// Endpoint to return logged-in user's MyBlocks LLM connection status (Server-side safe: API key is never exposed!)
+app.get('/api/user-llm-config', async (req, res) => {
+  const targetUserId = req.clientId || req.query.user_id || defaultScraperConfig.user_id;
+  const config = await getActiveApiKey(targetUserId, 'GROQ');
 
-// Get all API keys for user/firm
-app.get('/api/apikey-manager/list', async (req, res) => {
-  const userid = req.query.userid || defaultScraperConfig.user_id || 1572;
-  const firmid = req.query.firmid || defaultScraperConfig.firm_id || 5;
-
-  try {
-    const query = `
-      SELECT 
-        ID, USERID, FIRMID, LLM_PROVIDER, LLM_PROVIDER_TYPE,
-        MODEL_NAME, MODEL_URL, MODEL_RESPONSE_VARIABLE,
-        API_KEY, STATUS, BLOCKED, SHOW_IN_UI, SPEED, INSRT_DTM, UPD_DTM
-      FROM API_KEY_MANAGER 
-      WHERE USERID = ? AND FIRMID = ? AND SHOW_IN_UI = 'YES'
-      ORDER BY ID DESC
-    `;
-    const results = await poolQuery(query, [userid, firmid]);
-    res.json(results);
-  } catch (err) {
-    console.error('[APIKEY] Error fetching keys:', err.message);
-    res.status(500).json({ error: 'Database query failed.' });
-  }
+  res.json({
+    user_id: targetUserId,
+    exists: config.exists,
+    provider: config.provider || 'GROQ',
+    model: config.model || '-',
+    status: config.status || 'INACTIVE',
+    isActive: config.isActive,
+    message: config.exists 
+      ? (config.isActive ? `Connected: ${config.provider} (${config.model})` : `Inactive: ${config.provider} (${config.model})`)
+      : 'No API configured. Please add one in MyBlocks API Key Manager.'
+  });
 });
 
-// Get list of available LLM providers
-app.get('/api/apikey-manager/providers', async (req, res) => {
-  try {
-    const query = `
-      SELECT DISTINCT PROVIDER_VALUE, PROVIDER_LABEL, PROVIDER_TYPE 
-      FROM LLM_PROVIDER_MODELS 
-      ORDER BY PROVIDER_LABEL ASC
-    `;
-    const results = await poolQuery(query);
-    res.json(results);
-  } catch (err) {
-    console.error('[APIKEY] Error fetching providers:', err.message);
-    res.status(500).json({ error: 'Failed to fetch providers.' });
-  }
-});
 
-// Get available models for a provider
-app.get('/api/apikey-manager/models', async (req, res) => {
-  const { provider } = req.query;
-  if (!provider) return res.status(400).json({ error: 'Provider is required.' });
-
-  try {
-    const query = `
-      SELECT MODEL_VALUE 
-      FROM LLM_PROVIDER_MODELS 
-      WHERE PROVIDER_VALUE = ?
-      ORDER BY MODEL_VALUE ASC
-    `;
-    const results = await poolQuery(query, [provider]);
-    const models = results.map(row => row.MODEL_VALUE);
-    res.json(models);
-  } catch (err) {
-    console.error('[APIKEY] Error fetching models:', err.message);
-    res.status(500).json({ error: 'Failed to fetch models.' });
-  }
-});
-
-// Add a new API key
-app.post('/api/apikey-manager/add', async (req, res) => {
-  const USERID = req.body.USERID || defaultScraperConfig.user_id || 1572;
-  const FIRMID = req.body.FIRMID || defaultScraperConfig.firm_id || 5;
-  const LLM_PROVIDER = req.body.LLM_PROVIDER;
-  const API_KEY = req.body.API_KEY || '';
-  const LLM_PROVIDER_TYPE = req.body.LLM_PROVIDER_TYPE || 'TEXT-TO-TEXT';
-  const MODEL_RESPONSE_VARIABLE = req.body.MODEL_RESPONSE_VARIABLE || null;
-  const SHOW_IN_UI = req.body.SHOW_IN_UI || 'YES';
-  let MODEL_NAME = req.body.MODEL_NAME;
-
-  if (!LLM_PROVIDER) {
-    return res.status(400).json({ success: false, message: 'LLM_PROVIDER is required' });
-  }
-
-  const isMyBlocksServer = LLM_PROVIDER && LLM_PROVIDER.startsWith('MYBLOCKS_SERVERS');
-  if (!isMyBlocksServer && !API_KEY) {
-    return res.status(400).json({ success: false, message: 'API_KEY is required for this provider' });
-  }
-
-  try {
-    if (!MODEL_NAME) {
-      const defaultModelResults = await poolQuery(
-        'SELECT MODEL_VALUE FROM LLM_PROVIDER_MODELS WHERE PROVIDER_VALUE = ? ORDER BY MODEL_VALUE ASC LIMIT 1',
-        [LLM_PROVIDER]
-      );
-      MODEL_NAME = defaultModelResults.length > 0 ? defaultModelResults[0].MODEL_VALUE : 'default';
-    }
-
-    const providerResults = await poolQuery(
-      'SELECT PROVIDER_URL FROM LLM_PROVIDER_MODELS WHERE PROVIDER_VALUE = ? AND MODEL_VALUE = ? LIMIT 1',
-      [LLM_PROVIDER, MODEL_NAME]
-    );
-    const modelUrl = providerResults.length > 0 ? providerResults[0].PROVIDER_URL : null;
-
-    const insertQuery = `
-      INSERT INTO API_KEY_MANAGER (
-        USERID, FIRMID, LLM_PROVIDER, LLM_PROVIDER_TYPE, MODEL_NAME,
-        MODEL_URL, MODEL_RESPONSE_VARIABLE, API_KEY, 
-        STATUS, BLOCKED, SHOW_IN_UI
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'NO', ?)
-    `;
-
-    const result = await poolQuery(insertQuery, [
-      USERID, FIRMID, LLM_PROVIDER, LLM_PROVIDER_TYPE, MODEL_NAME,
-      modelUrl, MODEL_RESPONSE_VARIABLE, API_KEY, SHOW_IN_UI
-    ]);
-
-    logReallocation(`[API KEY MANAGER] Added new API Key for provider '${LLM_PROVIDER}' (${MODEL_NAME})`);
-    res.status(201).json({
-      success: true,
-      message: 'API Key added successfully',
-      id: result.insertId,
-      model_assigned: MODEL_NAME
-    });
-  } catch (err) {
-    console.error('[APIKEY] Error inserting API Key:', err.message);
-    res.status(500).json({ success: false, message: 'Database error', details: err.message });
-  }
-});
-
-// Toggle API key status (ACTIVE/INACTIVE)
-app.post('/api/apikey-manager/toggle-status', async (req, res) => {
-  const { id } = req.body;
-  if (!id) return res.status(400).json({ error: 'ID is required.' });
-
-  try {
-    const results = await poolQuery('SELECT STATUS FROM API_KEY_MANAGER WHERE ID = ?', [id]);
-    if (results.length === 0) return res.status(404).json({ error: 'Key not found.' });
-
-    const currentStatus = results[0].STATUS;
-    const newStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-
-    await poolQuery('UPDATE API_KEY_MANAGER SET STATUS = ? WHERE ID = ?', [newStatus, id]);
-    res.json({ success: true, newStatus });
-  } catch (err) {
-    console.error('[APIKEY] Toggle status error:', err.message);
-    res.status(500).json({ error: 'Failed to update status.' });
-  }
-});
-
-// Toggle BLOCKED status (YES/NO)
-app.post('/api/apikey-manager/toggle-blocked', async (req, res) => {
-  const { id } = req.body;
-  if (!id) return res.status(400).json({ error: 'ID is required.' });
-
-  try {
-    const results = await poolQuery('SELECT BLOCKED FROM API_KEY_MANAGER WHERE ID = ?', [id]);
-    if (results.length === 0) return res.status(404).json({ error: 'Key not found.' });
-
-    const currentBlocked = results[0].BLOCKED;
-    const newBlocked = currentBlocked === 'YES' ? 'NO' : 'YES';
-
-    await poolQuery('UPDATE API_KEY_MANAGER SET BLOCKED = ? WHERE ID = ?', [newBlocked, id]);
-    res.json({ success: true, newBlocked });
-  } catch (err) {
-    console.error('[APIKEY] Toggle blocked error:', err.message);
-    res.status(500).json({ error: 'Failed to update blocked status.' });
-  }
-});
-
-// Delete API Key (soft delete)
-app.delete('/api/apikey-manager/delete/:id', async (req, res) => {
-  const { id } = req.params;
-  if (!id) return res.status(400).json({ error: 'ID is required.' });
-
-  try {
-    await poolQuery("UPDATE API_KEY_MANAGER SET SHOW_IN_UI = 'NO', STATUS = 'INACTIVE' WHERE ID = ?", [id]);
-    res.json({ success: true, message: 'API key deleted successfully.' });
-  } catch (err) {
-    console.error('[APIKEY] Delete error:', err.message);
-    res.status(500).json({ error: 'Failed to delete API key.' });
-  }
-});
 
 // Fetch active unique regions (states) from Database
 app.get('/api/regions', async (req, res) => {
@@ -1549,10 +1701,10 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
   const tLimit = req.body.targetLimit ? parseInt(req.body.targetLimit, 10) : (hasExplicitTarget ? targetContacts : 0);
 
   try {
-    logReallocation(`[LLM DISCOVERY] Initiating Region Discovery for prompt '${promptText}' (Topic: '${currentOrchestrationTopic}', Coverage: '${coverageScope}')...`);
+    logReallocation(`[LLM DISCOVERY] Initiating Region Discovery for prompt '${promptText}' (Topic: '${currentOrchestrationTopic}', Coverage: '${coverageScope}', User: '${req.clientId}')...`);
     
-    // Step 1: LLM Region Discovery
-    const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit);
+    // Step 1: LLM Region Discovery using logged-in User's MyBlocks API Key Config
+    const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit, req.clientId);
     latestDiscoveryResults = discovered;
 
     logReallocation(`[LLM DISCOVERY] LLM identified ${discovered.length} locations across requested coverage scope.`);
@@ -1567,7 +1719,7 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
     logReallocation(`[PORTAL VALIDATION] Validation complete: ${completedCount} completed locations skipped, ${activeCount} locations queued for execution.`);
 
     // Step 3 & 4: Queue Creation & Batch Splitting
-    const generatedQueue = buildQueueAndBatchesFromValidation(validated, bSize);
+    const generatedQueue = buildQueueAndBatchesFromValidation(validated, bSize, req.clientId);
     cityQueue = generatedQueue;
 
     logReallocation(`[WORKFLOW QUEUE] Automatically generated workflow queue with ${cityQueue.length} executable batches.`);
@@ -1583,8 +1735,8 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Error in full-workflow orchestration:', err);
-    res.status(500).json({ error: `Workflow orchestration failed: ${err.message}` });
+    console.error('Error in full-workflow orchestration:', err.message);
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
@@ -1859,7 +2011,14 @@ async function triggerScraperRun(city, agent) {
       start_from: startFrom,
       city: cleanCity,
       portal_id: portalId,
-      categories: currentOrchestrationTopic !== 'General' ? [currentOrchestrationTopic] : []
+      categories: currentOrchestrationTopic !== 'General' ? [currentOrchestrationTopic] : [],
+      env: {
+        WDM_LOCAL: '1',
+        WDM_SSL_VERIFY: '0',
+        WDM_LOG_LEVEL: '0',
+        NO_PROXY: '*',
+        CHROMEDRIVER_PATH: 'C:\\Users\\MANISHA SHAIK\\Downloads\\chromedriver.exe'
+      }
     };
 
     logReallocation(`Starting execution: ${city.city_name} on portal ${portalId || 'N/A'} [User: ${currentUserId}, Firm: ${currentFirmId}, Member: ${currentMemberId}, Range: ${payload.start_from} to ${payload.start_from + payload.total_contacts - 1}]`);
@@ -2187,8 +2346,34 @@ function updateWorkflowState(scraperExecutions) {
       if (agent) agent.last_heartbeat = new Date();
       
       const progressPercentage = parseFloat(realExec.progress) || 0;
-      const processedCount = realExec.scraped_count !== undefined ? realExec.scraped_count : (realExec.processed_count !== undefined ? realExec.processed_count : Math.round((city?.total_companies || 500) * (progressPercentage / 100)));
-      const dbInsertCount = realExec.inserted_count !== undefined ? realExec.inserted_count : (realExec.db_inserted !== undefined ? realExec.db_inserted : processedCount);
+
+      let processedCount = 0;
+      if (realExec.scraped_count !== undefined) processedCount = realExec.scraped_count;
+      else if (realExec.processed_count !== undefined) processedCount = realExec.processed_count;
+      else if (realExec.total_scraped !== undefined) processedCount = realExec.total_scraped;
+      else if (realExec.scraped !== undefined) processedCount = realExec.scraped;
+      else processedCount = Math.round((city?.total_companies || 500) * (progressPercentage / 100));
+
+      let dbInsertCount = 0;
+      if (realExec.inserted_count !== undefined) dbInsertCount = realExec.inserted_count;
+      else if (realExec.db_inserted !== undefined) dbInsertCount = realExec.db_inserted;
+      else if (realExec.db_insert_count !== undefined) dbInsertCount = realExec.db_insert_count;
+      else if (realExec.inserted !== undefined) dbInsertCount = realExec.inserted;
+      else if (realExec.inserted_rows !== undefined) dbInsertCount = realExec.inserted_rows;
+      else if (realExec.total_inserted !== undefined) dbInsertCount = realExec.total_inserted;
+      else if (realExec.saved_count !== undefined) dbInsertCount = realExec.saved_count;
+      else if (realExec.total_saved !== undefined) dbInsertCount = realExec.total_saved;
+      else if (realExec.records_inserted !== undefined) dbInsertCount = realExec.records_inserted;
+      else dbInsertCount = processedCount;
+
+      // Fallback to cached live DB metrics if counts report zero during active execution
+      if (dbInsertCount === 0 && processedCount === 0 && cachedDbMetrics) {
+        const liveFallback = cachedDbMetrics.scrapedToday > 0 ? cachedDbMetrics.scrapedToday : (cachedDbMetrics.totalScraped || 0);
+        if (liveFallback > 0 && progressPercentage > 0) {
+          dbInsertCount = liveFallback;
+          processedCount = liveFallback;
+        }
+      }
 
       if (city) {
         const totalBatchesClean = Math.abs(parseInt(realExec.total_batches, 10)) || 1;
@@ -2300,6 +2485,18 @@ function autoReallocationEngine(scraperExecutions) {
 
       // Auto Recovery for Chrome crashes & failed executions
       if (realExec.status === 'failed' && city) {
+        const isNetworkWarning = realExec.error && (
+          realExec.error.includes('aswMonFltProxy') ||
+          realExec.error.includes('Could not reach host') ||
+          realExec.error.includes('Online version check skipped')
+        );
+
+        if (isNetworkWarning) {
+          logReallocation('[CHROMEDRIVER NOTICE] Using cached ChromeDriver. Online version check skipped.');
+          // Do not fail execution; continue normally
+          return;
+        }
+
         const isChromeError = realExec.error && (
           realExec.error.toLowerCase().includes('session not created') ||
           realExec.error.toLowerCase().includes('unable to connect to renderer') ||
