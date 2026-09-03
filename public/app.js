@@ -20,8 +20,6 @@ window.handleClientLogout = async function() {
   sessionStorage.clear();
 
   const loginModal = document.getElementById('clientLoginModal');
-  const appLayout = document.querySelector('.app-layout');
-  if (appLayout) appLayout.style.display = 'none';
   if (loginModal) loginModal.style.display = 'flex';
   
   // Reload cleanly to reset all background intervals and unauthenticated state
@@ -176,18 +174,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const sessionStr = localStorage.getItem('orchestrator_session_data');
     const loginModal = document.getElementById('clientLoginModal');
     const activeClientText = document.getElementById('activeClientNameText');
-    const appLayout = document.querySelector('.app-layout');
 
     if (!token || !sessionStr) {
       if (loginModal) loginModal.style.display = 'flex';
-      if (appLayout) appLayout.style.display = 'none';
       return false;
     }
 
     try {
       currentSession = JSON.parse(sessionStr);
       if (loginModal) loginModal.style.display = 'none';
-      if (appLayout) appLayout.style.display = 'flex';
 
       if (activeClientText) {
         activeClientText.textContent = `${currentSession.name} (${currentSession.role === 'admin' ? '👑 Admin' : 'Client ' + currentSession.client_id})`;
@@ -196,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       localStorage.clear();
       if (loginModal) loginModal.style.display = 'flex';
-      if (appLayout) appLayout.style.display = 'none';
       return false;
     }
   }
