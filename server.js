@@ -2718,7 +2718,16 @@ async function monitorEngine() {
       }
     }
 
-    const displayBatch = cityObj ? (cityObj.batch_count || '1/1') : (r.current_batch && r.current_batch !== '-' ? r.current_batch : '0/1');
+    let extractedBatchNumber = null;
+    const targetWorkflowName = cityObj?.city_name || r.current_workflow || '';
+    if (targetWorkflowName) {
+      const match = targetWorkflowName.match(/\[Batch\s+(\d+\/\d+)\]/i);
+      if (match) {
+        extractedBatchNumber = match[1];
+      }
+    }
+
+    const displayBatch = extractedBatchNumber || (cityObj ? (cityObj.batch_count || '1/1') : (r.current_batch && r.current_batch !== '-' ? r.current_batch : '0/1'));
 
     return {
       agent_id: r.runner_id,
