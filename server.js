@@ -5,9 +5,12 @@ const mysql = require('mysql2/promise');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
+const http = require('http');
+const WebSocket = require('ws');
+const { WebSocketServer } = WebSocket;
 
 const app = express();
-const PORT = process.env.PORT || 7700;
+const PORT = process.env.PORT || 7800;
 const SCRAPER_MANAGER_URL = process.env.SCRAPER_MANAGER_URL || 'http://127.0.0.1:7500';
 
 let cachedExeActive = false;
@@ -102,7 +105,13 @@ app.use((req, res, next) => {
   res.set('Expires', '0');
   next();
 });
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Default Client Directory & Accounts
 const defaultClientsList = [
@@ -197,6 +206,74 @@ app.post('/api/auth/login', async (req, res) => {
     username: clientRecord.username,
     name: clientRecord.name,
     role: clientRecord.role
+  });
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  const { name, username, password } = req.body || {};
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required for registration.' });
+  }
+
+  const cleanUser = username.trim();
+  const cleanPass = password.trim();
+  const cleanName = (name && name.trim()) ? name.trim() : cleanUser;
+
+  // Check if username already exists in defaultClientsList
+  const existingUser = defaultClientsList.find(c => c.username.toLowerCase() === cleanUser.toLowerCase());
+  if (existingUser) {
+    return res.status(400).json({ error: `Username '${cleanUser}' is already registered. Please log in.` });
+  }
+
+  // Generate new Client ID
+  const maxId = Math.max(...defaultClientsList.map(c => c.client_id || 0), 4000);
+  const newClientId = maxId + 1;
+
+  const newClientRecord = {
+    client_id: newClientId,
+    username: cleanUser,
+    password: cleanPass,
+    name: cleanName,
+    role: 'client'
+  };
+
+  defaultClientsList.push(newClientRecord);
+
+  // Attempt database registration in user_table if possible
+  try {
+    await poolQuery(
+      `INSERT INTO user_table (user_id, email, firstname, lastname, password, privilege, is_active)
+       VALUES (?, ?, ?, ?, ?, 'client', 1)`,
+      [newClientId, `${cleanUser}@client.com`, cleanName, '', cleanPass]
+    );
+    console.log(`[CLIENT AUTH] Registered new user '${cleanUser}' (Client ID: ${newClientId}) in DB user_table.`);
+  } catch (err) {
+    console.log(`[CLIENT AUTH] Note: DB insert fallback for '${cleanUser}':`, err.message);
+  }
+
+  // Automatically log in the user upon registration
+  const token = `sess_${newClientId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  const sessionData = {
+    client_id: newClientId,
+    username: cleanUser,
+    name: cleanName,
+    role: 'client',
+    created_at: new Date()
+  };
+
+  activeSessions[token] = sessionData;
+
+  logReallocation(`[CLIENT AUTH] New account '${cleanUser}' (Client ID: ${newClientId}) registered and logged in.`);
+
+  return res.json({
+    success: true,
+    token: token,
+    client_id: newClientId,
+    username: cleanUser,
+    name: cleanName,
+    role: 'client',
+    message: 'Account registered successfully!'
   });
 });
 
@@ -330,6 +407,172 @@ function logReallocationEvent(eventData) {
   reallocationEvents.unshift(fullEvent);
   if (reallocationEvents.length > 100) reallocationEvents.pop();
   logReallocation(`[${fullEvent.event_type}] ${fullEvent.city_batch} | From: ${fullEvent.from_agent} -> To: ${fullEvent.to_agent} | ${fullEvent.reason}`);
+}
+
+// WebSocket Live Runner Registry Connection Manager
+const wsConnectedRunners = new Map(); // runner_id -> { ws, runner_id, runner_name, client_id, server_ip, port, connected_at, last_heartbeat, status }
+
+function handleWsConnection(ws, req) {
+  const clientIp = req.socket.remoteAddress || '127.0.0.1';
+  let authenticatedRunnerId = null;
+
+  console.log(`[WEBSOCKET] Client connecting from ${clientIp}...`);
+
+  ws.on('message', (messageBuffer) => {
+    try {
+      const messageStr = messageBuffer.toString();
+      const data = JSON.parse(messageStr);
+      const eventType = data.event || data.type || data.action;
+
+      if (eventType === 'register') {
+        const runnerId = data.runner_id || `runner_${data.client_id || '1572'}`;
+        authenticatedRunnerId = runnerId;
+
+        wsConnectedRunners.set(runnerId, {
+          ws: ws,
+          runner_id: runnerId,
+          runner_name: data.runner_name || runnerId,
+          client_id: parseInt(data.client_id, 10) || 1572,
+          server_ip: data.server_ip || clientIp,
+          port: data.port || 7500,
+          connected_at: new Date(),
+          last_heartbeat: new Date(),
+          status: 'Idle'
+        });
+
+        let regItem = runnerRegistry.find(r => r.runner_id === runnerId || r.agent_name === data.runner_name);
+        if (regItem) {
+          regItem.status = 'Idle';
+          regItem.last_heartbeat = new Date();
+          if (data.runner_name) regItem.agent_name = data.runner_name;
+          if (data.runner_id) regItem.runner_id = data.runner_id;
+        } else {
+          runnerRegistry.push({
+            runner_id: runnerId,
+            server_name: data.runner_name || `Server (${data.server_ip || '127.0.0.1'})`,
+            host_ip: `${data.server_ip || '127.0.0.1'}:${data.port || 7500}`,
+            agent_name: data.runner_name || runnerId,
+            client_id: parseInt(data.client_id, 10) || 1572,
+            status: 'Idle',
+            last_heartbeat: new Date(),
+            current_workflow: null,
+            current_batch: null,
+            execution_id: null,
+            portal_id: null
+          });
+        }
+
+        console.log(`[WEBSOCKET REGISTER] Runner '${runnerId}' (${data.runner_name}) registered successfully.`);
+        logReallocationEvent({
+          event_type: 'WS Register',
+          from_agent: '-',
+          to_agent: data.runner_name || runnerId,
+          portal_id: '-',
+          city_batch: '-',
+          reason: `WebSocket runner connected from ${clientIp}`
+        });
+
+        ws.send(JSON.stringify({
+          event: 'registered',
+          status: 'success',
+          runner_id: runnerId,
+          timestamp: new Date().toISOString()
+        }));
+
+      } else if (eventType === 'heartbeat') {
+        const runnerId = data.runner_id || authenticatedRunnerId;
+        if (runnerId && wsConnectedRunners.has(runnerId)) {
+          const clientObj = wsConnectedRunners.get(runnerId);
+          clientObj.last_heartbeat = new Date();
+          if (data.status) clientObj.status = (data.status === 'running' ? 'Running' : 'Idle');
+
+          const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+          if (regItem) {
+            regItem.last_heartbeat = new Date();
+            if (data.status) regItem.status = (data.status === 'running' ? 'Running' : 'Idle');
+          }
+        }
+
+      } else if (eventType === 'progress') {
+        const runnerId = data.runner_id || authenticatedRunnerId;
+        console.log(`[WEBSOCKET PROGRESS] Runner '${runnerId}': Category '${data.category || '-'}', Status '${data.status || '-'}', ExecID '${data.execution_id || '-'}'`);
+        
+        const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        if (regItem) {
+          regItem.status = 'Running';
+          if (data.portal_id) regItem.portal_id = data.portal_id;
+          if (data.execution_id) regItem.execution_id = data.execution_id;
+          if (data.category) regItem.current_workflow = data.category;
+        }
+
+      } else if (eventType === 'execution_completed') {
+        const runnerId = data.runner_id || authenticatedRunnerId;
+        console.log(`[WEBSOCKET COMPLETED] Runner '${runnerId}' completed task (SP_ID: ${data.sp_id || '-'}, Portal: ${data.portal_id || '-'})`);
+        
+        const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        if (regItem) {
+          regItem.status = 'Idle';
+          regItem.current_workflow = null;
+          regItem.execution_id = null;
+        }
+
+        logReallocationEvent({
+          event_type: 'WS Task Completed',
+          from_agent: data.runner_id || authenticatedRunnerId || 'Runner',
+          to_agent: '-',
+          portal_id: data.portal_id || '-',
+          city_batch: data.portal_name || data.category || '-',
+          reason: `Execution completed via WebSocket (SP_ID: ${data.sp_id || '-'})`
+        });
+
+      } else if (eventType === 'execution_failed') {
+        const runnerId = data.runner_id || authenticatedRunnerId;
+        console.error(`[WEBSOCKET FAILED] Runner '${runnerId}' failed task: ${data.error}`);
+        
+        const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        if (regItem) regItem.status = 'Idle';
+
+        errorHistory.unshift({
+          timestamp: new Date().toLocaleTimeString(),
+          agent: runnerId,
+          error: data.error || 'Execution failed via WebSocket',
+          severity: 'High'
+        });
+        if (errorHistory.length > 50) errorHistory.pop();
+      }
+    } catch (err) {
+      console.error('[WEBSOCKET MSG PARSE ERROR]', err.message);
+    }
+  });
+
+  ws.on('close', () => {
+    if (authenticatedRunnerId) {
+      console.log(`[WEBSOCKET DISCONNECT] Runner '${authenticatedRunnerId}' disconnected.`);
+      wsConnectedRunners.delete(authenticatedRunnerId);
+      const regItem = runnerRegistry.find(r => r.runner_id === authenticatedRunnerId);
+      if (regItem) regItem.status = 'Disconnected';
+    }
+  });
+
+  ws.on('error', (err) => {
+    console.error(`[WEBSOCKET ERROR] Client ${authenticatedRunnerId || clientIp}:`, err.message);
+  });
+}
+
+function dispatchTaskViaWebSocket(runnerId, jobData) {
+  const clientObj = wsConnectedRunners.get(runnerId);
+  if (clientObj && clientObj.ws && clientObj.ws.readyState === WebSocket.OPEN) {
+    clientObj.ws.send(JSON.stringify({
+      event: 'start_execution',
+      action: 'start_execution',
+      job_data: jobData
+    }));
+    clientObj.status = 'Running';
+    const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+    if (regItem) regItem.status = 'Running';
+    return true;
+  }
+  return false;
 }
 
 // Default scraper config
@@ -1808,6 +2051,34 @@ app.post('/api/runners/delete', (req, res) => {
   res.json({ success: true });
 });
 
+// WebSocket Live Monitoring & Dispatch Endpoints
+app.get('/api/ws/runners', (req, res) => {
+  const activeList = Array.from(wsConnectedRunners.entries()).map(([id, info]) => ({
+    runner_id: id,
+    runner_name: info.runner_name,
+    client_id: info.client_id,
+    server_ip: info.server_ip,
+    port: info.port,
+    connected_at: info.connected_at,
+    last_heartbeat: info.last_heartbeat,
+    status: info.status
+  }));
+  res.json({ success: true, count: activeList.length, connected_runners: activeList });
+});
+
+app.post('/api/ws/dispatch', (req, res) => {
+  const { runner_id, job_data } = req.body || {};
+  if (!runner_id || !job_data) {
+    return res.status(400).json({ error: 'runner_id and job_data are required.' });
+  }
+  const sent = dispatchTaskViaWebSocket(runner_id, job_data);
+  if (sent) {
+    return res.json({ success: true, message: `Task dispatched to WebSocket runner '${runner_id}' successfully.` });
+  } else {
+    return res.status(404).json({ error: `WebSocket runner '${runner_id}' not connected or inactive.` });
+  }
+});
+
 // Allocations Control Endpoints
 app.post('/api/allocations/pause', (req, res) => {
   allocationEngineActive = false;
@@ -2775,6 +3046,30 @@ async function monitorEngine() {
 setInterval(allocationEngine, 4000);
 setInterval(monitorEngine, 5000);
 
-app.listen(PORT, () => {
-  console.log(`Dynamic standalone Orchestrator active on port ${PORT}`);
+// SPA Fallback Route - serve index.html for non-API client routes like /login
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Attach HTTP Server & Dual WebSocket Listener (Ports 7800 and 7700)
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', handleWsConnection);
+
+const WS_PORT = process.env.WS_PORT || 7700;
+let wsPortServer = null;
+try {
+  wsPortServer = new WebSocketServer({ port: WS_PORT });
+  wsPortServer.on('connection', handleWsConnection);
+  console.log(`[WEBSOCKET] Dedicated WebSocket listener active on ws://0.0.0.0:${WS_PORT}`);
+} catch (err) {
+  console.log(`[WEBSOCKET] Dedicated port ${WS_PORT} notice: ${err.message}. WebSocket accessible via main server port ${PORT}.`);
+}
+
+server.listen(PORT, () => {
+  console.log(`Dynamic standalone Orchestrator active on port ${PORT} (WebSocket endpoints live at ws://127.0.0.1:${PORT}/ws & ws://127.0.0.1:${WS_PORT}/ws)`);
 });

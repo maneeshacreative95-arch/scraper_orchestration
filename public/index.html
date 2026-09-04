@@ -51,24 +51,15 @@
           </div>
         </div>
         <div class="header-right" style="display: flex; gap: 12px; align-items: center;">
-          <div id="loggedInUserBadge" style="display: flex; align-items: center; gap: 8px; background: rgba(30, 41, 59, 0.6); padding: 4px 12px; border-radius: 8px; border: 1px solid var(--border-card);">
+          <div id="loggedInUserBadge" style="display: flex; align-items: center; gap: 8px; background: rgba(30, 41, 59, 0.6); padding: 4px 12px; border-radius: 8px; border: 1px solid var(--border-card); cursor: pointer;" title="Click to Log In / Switch Account" onclick="const m=document.getElementById('clientLoginModal'); if(m) m.style.display='flex';">
             <span style="font-size: 0.8rem; color: #94a3b8;">👤 Session:</span>
-            <strong id="activeClientNameText" style="font-size: 0.85rem; color: #60a5fa;">Client 1572 (Manisha)</strong>
-          </div>
-          <div class="client-selector-wrapper" style="display: flex; align-items: center; gap: 8px; background: rgba(30, 41, 59, 0.6); padding: 4px 12px; border-radius: 8px; border: 1px solid var(--border-card);">
-            <span style="font-size: 0.8rem; color: #94a3b8;">Switch:</span>
-            <select id="globalClientSelector" class="input-style" style="padding: 4px 8px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
-              <option value="1572">Client 1572 (Manisha)</option>
-              <option value="2001">Client 2001 (Client B)</option>
-              <option value="3002">Client 3002 (Client C)</option>
-              <option value="admin">👑 Admin View (All Clients)</option>
-            </select>
+            <strong id="activeClientNameText" style="font-size: 0.85rem; color: #60a5fa;">Not Logged In</strong>
           </div>
           <div class="sim-toggle-wrapper">
             <span class="sim-label">Scraper Backend (7500):</span>
             <span id="backendStatusBadge" class="badge badge-running">Checking...</span>
           </div>
-          <button id="logoutBtn" type="button" class="btn btn-secondary" style="color: #f87171; border-color: rgba(239,68,68,0.3); font-weight: 600; cursor: pointer;" onclick="try{fetch('/api/auth/logout',{method:'POST',headers:{'X-Session-Token':localStorage.getItem('orchestrator_session_token')}}).catch(()=>{});}catch(e){} localStorage.clear(); sessionStorage.clear(); location.href='/';">🚪 Logout</button>
+          <button id="logoutBtn" type="button" class="btn btn-secondary" style="color: #f87171; border-color: rgba(239,68,68,0.3); font-weight: 600; cursor: pointer;" onclick="handleClientLogout()">🚪 Logout</button>
         </div>
       </header>
 
@@ -520,11 +511,10 @@
                 <tbody id="errorsTableBody">
                   <!-- Dynamically populated -->
                 </tbody>
-                      </section>
-      </main>/div>
+              </table>
+            </div>
           </div>
         </section>
-
       </main>
 
       <footer class="app-footer">
@@ -533,19 +523,21 @@
     </div>
   </div>
 
-  <!-- Client Authentication Login Modal -->
+  <!-- Client Authentication Login & Register Modal -->
   <div id="clientLoginModal" style="position: fixed; inset: 0; z-index: 99999; background: rgba(15, 23, 42, 0.94); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: center; padding: 20px;">
     <div style="width: 100%; max-width: 440px; background: #0f172a; border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 16px; padding: 2.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);">
       <div style="text-align: center; margin-bottom: 2rem;">
         <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; background: rgba(59, 130, 246, 0.15); border-radius: 16px; margin-bottom: 1rem;">
           <span style="font-size: 2rem;">🔐</span>
         </div>
-        <h2 style="font-size: 1.6rem; font-weight: 700; color: #f8fafc; margin-bottom: 6px;">Client Authentication</h2>
-        <p style="font-size: 0.88rem; color: #94a3b8;">Log in to access your Scraper Orchestrator workspace.</p>
+        <h2 id="authModalTitle" style="font-size: 1.6rem; font-weight: 700; color: #f8fafc; margin-bottom: 6px;">Client Authentication</h2>
+        <p id="authModalSub" style="font-size: 0.88rem; color: #94a3b8;">Log in to access your Scraper Orchestrator workspace.</p>
       </div>
 
       <div id="loginErrorAlert" class="badge badge-failed" style="display: none; width: 100%; padding: 10px 14px; margin-bottom: 1.2rem; font-size: 0.85rem; border-radius: 8px; text-align: center; white-space: normal; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);"></div>
+      <div id="loginSuccessAlert" class="badge badge-completed" style="display: none; width: 100%; padding: 10px 14px; margin-bottom: 1.2rem; font-size: 0.85rem; border-radius: 8px; text-align: center; white-space: normal; background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3);"></div>
 
+      <!-- Login Form -->
       <form id="clientLoginForm" style="display: flex; flex-direction: column; gap: 16px;">
         <div>
           <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Username</label>
@@ -560,18 +552,33 @@
         <button type="submit" id="loginSubmitBtn" class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 1rem; font-weight: 600; border-radius: 8px; margin-top: 8px;">Log In</button>
       </form>
 
-      <div style="margin-top: 1.8rem; padding-top: 1.2rem; border-top: 1px solid rgba(51, 65, 85, 0.6); font-size: 0.78rem; color: #94a3b8;">
-        <div style="font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Demo Client Credentials:</div>
-        <div style="display: grid; grid-template-columns: 1fr; gap: 4px; font-family: monospace; font-size: 0.75rem;">
-          <div><strong style="color: #60a5fa;">Client 1572:</strong> maneesha / maneesha123</div>
-          <div><strong style="color: #c084fc;">Client 2001:</strong> client2001 / client2001</div>
-          <div><strong style="color: #4ade80;">Client 3002:</strong> client3002 / client3002</div>
-          <div><strong style="color: #fbbf24;">Admin:</strong> admin / admin123</div>
+      <!-- Registration Form -->
+      <form id="clientRegisterForm" style="display: none; flex-direction: column; gap: 16px;">
+        <div>
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Full Name</label>
+          <input type="text" id="regName" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Enter full name (e.g. Maneesha Shaik)">
         </div>
+
+        <div>
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Username</label>
+          <input type="text" id="regUsername" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Create username" required>
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Password</label>
+          <input type="password" id="regPassword" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Create password" required>
+        </div>
+
+        <button type="submit" id="regSubmitBtn" class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 1rem; font-weight: 600; border-radius: 8px; margin-top: 8px;">Register & Log In</button>
+      </form>
+
+      <div style="margin-top: 1.5rem; text-align: center; font-size: 0.85rem; color: #94a3b8;">
+        <span id="authToggleText">Don't have an account?</span>
+        <a href="#" id="authToggleBtn" style="color: #60a5fa; font-weight: 600; text-decoration: underline; margin-left: 5px;">Register here</a>
       </div>
     </div>
   </div>
 
-  <script src="app.js?v=3001"></script>
+  <script src="app.js?v=4001"></script>
 </body>
 </html>

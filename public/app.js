@@ -1,10 +1,22 @@
+// Immediate Auth Check on script load
+(function initAuthCheck() {
+  if (window.location.pathname.includes('/login') || window.location.search.includes('logout')) {
+    try {
+      localStorage.removeItem('orchestrator_session_token');
+      localStorage.removeItem('orchestrator_session_data');
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch(e) {}
+  }
+})();
+
 // Global Logout Handler — defined at top level for instant availability
-window.handleClientLogout = async function() {
+window.handleClientLogout = function() {
   console.log('[CLIENT AUTH] Logging out session...');
   try {
     const token = localStorage.getItem('orchestrator_session_token');
     if (token) {
-      await fetch('/api/auth/logout', {
+      fetch('/api/auth/logout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -14,16 +26,13 @@ window.handleClientLogout = async function() {
     }
   } catch (e) {}
 
-  localStorage.removeItem('orchestrator_session_token');
-  localStorage.removeItem('orchestrator_session_data');
   localStorage.clear();
   sessionStorage.clear();
 
   const loginModal = document.getElementById('clientLoginModal');
   if (loginModal) loginModal.style.display = 'flex';
   
-  // Reload cleanly to reset all background intervals and unauthenticated state
-  window.location.href = '/';
+  window.location.href = '/login';
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -170,6 +179,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentSession = null;
 
   function checkAuthStatus() {
+    if (window.location.pathname.includes('/login')) {
+      localStorage.clear();
+      sessionStorage.clear();
+    }
+
     const token = localStorage.getItem('orchestrator_session_token');
     const sessionStr = localStorage.getItem('orchestrator_session_data');
     const loginModal = document.getElementById('clientLoginModal');
@@ -177,6 +191,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!token || !sessionStr) {
       if (loginModal) loginModal.style.display = 'flex';
+      if (activeClientText) {
+        activeClientText.innerHTML = '<span style="color: #f87171; font-weight: 600;">Not Logged In (Click to Log In)</span>';
+      }
       return false;
     }
 
@@ -191,6 +208,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       localStorage.clear();
       if (loginModal) loginModal.style.display = 'flex';
+      if (activeClientText) {
+        activeClientText.innerHTML = '<span style="color: #f87171; font-weight: 600;">Not Logged In (Click to Log In)</span>';
+      }
       return false;
     }
   }
@@ -215,20 +235,135 @@ document.addEventListener('DOMContentLoaded', () => {
     return headers;
   }
 
-  // Login Form Handler
+  // Auth Form & Toggle Handlers
   const loginForm = document.getElementById('clientLoginForm');
+  const registerForm = document.getElementById('clientRegisterForm');
+  const authToggleBtn = document.getElementById('authToggleBtn');
+  const authToggleText = document.getElementById('authToggleText');
+  const authModalTitle = document.getElementById('authModalTitle');
+  const authModalSub = document.getElementById('authModalSub');
+  const alertBox = document.getElementById('loginErrorAlert');
+  const successBox = document.getElementById('loginSuccessAlert');
+
+  let isRegisterMode = false;
+
+  if (authToggleBtn) {
+    authToggleBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      isRegisterMode = !isRegisterMode;
+      if (alertBox) alertBox.style.display = 'none';
+      if (successBox) successBox.style.display = 'none';
+
+      if (isRegisterMode) {
+        if (loginForm) loginForm.style.display = 'none';
+        if (registerForm) registerForm.style.display = 'flex';
+        if (authModalTitle) authModalTitle.textContent = 'Create Account';
+        if (authModalSub) authModalSub.textContent = 'Register a new client workspace account.';
+        if (authToggleText) authToggleText.textContent = 'Already have an account?';
+        authToggleBtn.textContent = 'Log In here';
+      } else {
+        if (registerForm) registerForm.style.display = 'none';
+        if (loginForm) loginForm.style.display = 'flex';
+        if (authModalTitle) authModalTitle.textContent = 'Client Authentication';
+        if (authModalSub) authModalSub.textContent = 'Log in to access your Scraper Orchestrator workspace.';
+        if (authToggleText) authToggleText.textContent = "Don't have an account?";
+        authToggleBtn.textContent = 'Register here';
+      }
+    });
+  }
+
+  // Registration Form Submit Handler
+  if (registerForm) {
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const regNameInput = document.getElementById('regName');
+      const regUsernameInput = document.getElementById('regUsername');
+      const regPasswordInput = document.getElementById('regPassword');
+      const submitBtn = document.getElementById('regSubmitBtn');
+
+      const name = regNameInput ? regNameInput.value.trim() : '';
+      const username = regUsernameInput ? regUsernameInput.value.trim() : '';
+      const password = regPasswordInput ? regPasswordInput.value.trim() : '';
+
+      if (alertBox) alertBox.style.display = 'none';
+      if (successBox) successBox.style.display = 'none';
+
+      if (!username || !password) {
+        if (alertBox) {
+          alertBox.textContent = 'Please create both a username and password.';
+          alertBox.style.display = 'block';
+        }
+        return;
+      }
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Registering Account...';
+      }
+
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, username, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          localStorage.setItem('orchestrator_session_token', data.token);
+          localStorage.setItem('orchestrator_session_data', JSON.stringify(data));
+
+          if (successBox) {
+            successBox.textContent = 'Registration successful! Logging you in...';
+            successBox.style.display = 'block';
+          }
+
+          setTimeout(() => {
+            checkAuthStatus();
+            fetchStatus();
+          }, 800);
+        } else {
+          if (alertBox) {
+            alertBox.textContent = data.error || 'Registration failed. Please try again.';
+            alertBox.style.display = 'block';
+          }
+        }
+      } catch (err) {
+        if (alertBox) {
+          alertBox.textContent = 'Server connection error. Please try again.';
+          alertBox.style.display = 'block';
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Register & Log In';
+        }
+      }
+    });
+  }
+
+  // Login Form Handler
   if (loginForm) {
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const usernameInput = document.getElementById('loginUsername');
       const passwordInput = document.getElementById('loginPassword');
-      const alertBox = document.getElementById('loginErrorAlert');
       const submitBtn = document.getElementById('loginSubmitBtn');
 
       const username = usernameInput ? usernameInput.value.trim() : '';
       const password = passwordInput ? passwordInput.value.trim() : '';
 
       if (alertBox) alertBox.style.display = 'none';
+      if (successBox) successBox.style.display = 'none';
+
+      if (!username || !password) {
+        if (alertBox) {
+          alertBox.textContent = 'Please enter both username and password.';
+          alertBox.style.display = 'block';
+        }
+        return;
+      }
+
       if (submitBtn) {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Authenticating...';
