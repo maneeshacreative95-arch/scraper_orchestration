@@ -575,6 +575,46 @@ function dispatchTaskViaWebSocket(runnerId, jobData) {
   return false;
 }
 
+// Helper to retrieve an active WebSocket runner connection
+function getConnectedWsRunner(runnerOrAgent) {
+  if (!runnerOrAgent) return null;
+
+  const targetId = runnerOrAgent.runner_id || runnerOrAgent.agent_id;
+  const targetName = runnerOrAgent.agent_name || runnerOrAgent.server_name;
+  const targetClientId = parseInt(runnerOrAgent.client_id, 10);
+
+  // 1. Direct match by runner_id or agent_name
+  for (const [id, info] of wsConnectedRunners.entries()) {
+    if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
+      const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
+      if (heartbeatAgeSec > 35) continue; // Ignore stale heartbeats (>35s)
+
+      if ((targetId && (id === targetId || info.runner_id === targetId)) || 
+          (targetName && info.runner_name && info.runner_name.toLowerCase() === targetName.toLowerCase())) {
+        return info;
+      }
+    }
+  }
+
+  // 2. Client ID match fallback if specific runner_id / agent_name not matched directly
+  if (targetClientId) {
+    for (const [id, info] of wsConnectedRunners.entries()) {
+      if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
+        const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
+        if (heartbeatAgeSec <= 35 && info.client_id === targetClientId && (info.status === 'Idle' || info.status === 'idle')) {
+          return info;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function isRunnerConnectedAndActive(runnerOrAgent) {
+  return getConnectedWsRunner(runnerOrAgent) !== null;
+}
+
 // Default scraper config
 let defaultScraperConfig = {
   username: "Maneesha",
@@ -2263,47 +2303,110 @@ async function triggerScraperRun(city, agent) {
     .replace(/\(\d+\)/gi, '')
     .trim();
 
-  try {
-    const bSize = schedulerConfig.batch_size || defaultScraperConfig.batch_size || 300;
-    const startFrom = city.start_from || 1;
-    const batchCountTarget = city.estimated_company_count || bSize;
-    // Total contacts end target so Python backend math.ceil((total_contacts - start_from + 1) / batch_size) calculates POSITIVE batch count (e.g. 1)!
-    const totalContactsForScraper = startFrom + batchCountTarget - 1;
+  const bSize = schedulerConfig.batch_size || defaultScraperConfig.batch_size || 300;
+  const startFrom = city.start_from || 1;
+  const batchCountTarget = city.estimated_company_count || bSize;
+  const totalContactsForScraper = startFrom + batchCountTarget - 1;
 
-    const payload = {
-      ...defaultScraperConfig,
-      user_id: currentUserId,
-      firm_id: currentFirmId,
-      memberid: currentMemberId,
-      member_id: currentMemberId,
-      username: agent.agent_name, // Override with dynamically auto-created agent name!
-      run_basic: schedulerConfig.run_basic,
-      run_contact: schedulerConfig.run_contact,
-      run_social: schedulerConfig.run_social,
-      run_leader: schedulerConfig.run_leader,
-      batch_size: bSize,
-      total_contacts: totalContactsForScraper,
-      start_from: startFrom,
-      city: cleanCity,
-      portal_id: portalId,
-      categories: currentOrchestrationTopic !== 'General' ? [currentOrchestrationTopic] : [],
-      env: {
-        WDM_LOCAL: '1',
-        WDM_SSL_VERIFY: '0',
-        WDM_LOG_LEVEL: '0',
-        NO_PROXY: '*',
-        CHROMEDRIVER_PATH: 'C:\\Users\\MANISHA SHAIK\\Downloads\\chromedriver.exe'
+  const executionId = city.execution_id || ('exec_' + Math.random().toString(36).substr(2, 9));
+  city.execution_id = executionId;
+  if (agent) agent.execution_id = executionId;
+
+  const payload = {
+    ...defaultScraperConfig,
+    user_id: currentUserId,
+    firm_id: currentFirmId,
+    memberid: currentMemberId,
+    member_id: currentMemberId,
+    username: agent.agent_name,
+    run_basic: schedulerConfig.run_basic,
+    run_contact: schedulerConfig.run_contact,
+    run_social: schedulerConfig.run_social,
+    run_leader: schedulerConfig.run_leader,
+    batch_size: bSize,
+    total_contacts: totalContactsForScraper,
+    start_from: startFrom,
+    city: cleanCity,
+    portal_id: portalId,
+    categories: currentOrchestrationTopic !== 'General' ? [currentOrchestrationTopic] : [],
+    env: {
+      WDM_LOCAL: '1',
+      WDM_SSL_VERIFY: '0',
+      WDM_LOG_LEVEL: '0',
+      NO_PROXY: '*',
+      CHROMEDRIVER_PATH: 'C:\\Users\\MANISHA SHAIK\\Downloads\\chromedriver.exe'
+    }
+  };
+
+  logReallocation(`Starting execution: ${city.city_name} on portal ${portalId || 'N/A'} [User: ${currentUserId}, Firm: ${currentFirmId}, Member: ${currentMemberId}, Range: ${payload.start_from} to ${payload.start_from + payload.total_contacts - 1}]`);
+
+  city.started_at = new Date().toLocaleTimeString();
+  if (portalId) {
+    city.portal_id = portalId;
+    if (agent) agent.portal_id = portalId;
+  }
+
+  // 1. Send start_execution message over WebSocket directly to THAT runner's WebSocket
+  const activeWsRunner = getConnectedWsRunner(agent);
+  if (activeWsRunner && activeWsRunner.ws && activeWsRunner.ws.readyState === WebSocket.OPEN) {
+    const jobPayload = {
+      event: 'start_execution',
+      action: 'start_execution',
+      job_data: {
+        SP_ID: city.sp_id || Math.floor(Math.random() * 100000),
+        PORTALID: portalId,
+        PORTALNAME: cleanCity,
+        EMP_ID: currentUserId,
+        STATUS: 'PENDING',
+        execution_id: executionId,
+        city: cleanCity,
+        portal_id: portalId,
+        user_id: currentUserId,
+        firm_id: currentFirmId,
+        categories: currentOrchestrationTopic !== 'General' ? [currentOrchestrationTopic] : [],
+        ...payload
       }
     };
 
-    logReallocation(`Starting execution: ${city.city_name} on portal ${portalId || 'N/A'} [User: ${currentUserId}, Firm: ${currentFirmId}, Member: ${currentMemberId}, Range: ${payload.start_from} to ${payload.start_from + payload.total_contacts - 1}]`);
-    
-    city.started_at = new Date().toLocaleTimeString();
-    if (portalId) {
-      city.portal_id = portalId;
-      agent.portal_id = portalId;
-    }
+    activeWsRunner.ws.send(JSON.stringify(jobPayload));
+    activeWsRunner.status = 'Running';
+    activeWsRunner.current_workflow = city.city_name;
+    activeWsRunner.execution_id = executionId;
 
+    executions[executionId] = {
+      execution_id: executionId,
+      user_id: currentUserId,
+      firm_id: currentFirmId,
+      memberid: currentMemberId,
+      city_name: city.city_name,
+      agent_id: agent.agent_id || activeWsRunner.runner_id,
+      started_at: new Date()
+    };
+
+    logReallocation(`[WEBSOCKET DISPATCH] Execution '${executionId}' for ${cleanCity} (Portal: ${portalId}) sent to WebSocket runner '${activeWsRunner.runner_name}' (${activeWsRunner.runner_id}).`);
+    addExecutionLog(currentUserId, executionId, 'Started', 0, 0, `WebSocket task sent directly to runner '${activeWsRunner.runner_name}'`);
+    return true;
+  }
+
+  // 2. If NO active WebSocket connection, DO NOT fall back to local 127.0.0.1 HTTP unless local agent is explicitly target
+  const runner = runnerRegistry.find(r => r.agent_name === agent.agent_name || r.runner_id === agent.agent_id);
+  const isLocalAgent = (runner && (runner.host_ip.includes('127.0.0.1') || runner.host_ip.includes('localhost'))) || 
+                       (agent.agent_name && agent.agent_name.toLowerCase().includes('local'));
+
+  if (!isLocalAgent) {
+    console.warn(`[DISPATCH HOLD] Runner '${agent.agent_name}' has no active WebSocket connection. Holding batch in Pending state.`);
+    logReallocation(`[DISPATCH HOLD] Skipped execution assignment for '${agent.agent_name}': No active WebSocket connection found.`);
+    city.status = 'Pending';
+    city.assigned_agent = null;
+    city.portal_id = null;
+    agent.status = 'Idle';
+    agent.current_city = null;
+    if (runner) runner.status = 'Disconnected';
+    return false;
+  }
+
+  // 3. Fallback for Local Host PC agent ONLY
+  try {
     const response = await fetch(`${SCRAPER_MANAGER_URL}/start-execution`, {
       method: 'POST',
       headers: {
@@ -2331,30 +2434,19 @@ async function triggerScraperRun(city, agent) {
           agent_id: agent.agent_id,
           started_at: new Date()
         };
-        logReallocation(`Allocated city ${city.city_name} to agent ${agent.agent_name}. Execution: ${data.execution_id}`);
-        addExecutionLog(currentUserId, data.execution_id, 'Started', 0, 0, `Execution initiated for ${city.city_name} (Portal: ${portalId})`);
-      } else {
-        city.status = 'Pending';
-        city.assigned_agent = null;
-        agent.status = 'Idle';
-        agent.current_city = null;
-        logReallocation(`[TRIGGER ERROR] Execution ID missing in response for ${city.city_name}`);
+        logReallocation(`Allocated city ${city.city_name} to local agent ${agent.agent_name}. Execution: ${data.execution_id}`);
+        addExecutionLog(currentUserId, data.execution_id, 'Started', 0, 0, `Local execution initiated for ${city.city_name} (Portal: ${portalId})`);
+        return true;
       }
-    } else {
-      city.status = 'Pending';
-      city.assigned_agent = null;
-      agent.status = 'Idle';
-      agent.current_city = null;
-      logReallocation(`[TRIGGER ERROR] Server returned HTTP ${response.status} for ${city.city_name}`);
     }
   } catch (err) {
-    console.error(`[TRIGGER] Connection failed: ${err.message}`);
-    city.status = 'Pending';
-    city.assigned_agent = null;
-    agent.status = 'Idle';
-    agent.current_city = null;
-    logReallocation(`[TRIGGER ERROR] Connection failed for ${city.city_name}: ${err.message}`);
+    console.error(`[LOCAL HTTP DISPATCH ERROR] Failed to start local execution for ${agent.agent_name}:`, err.message);
   }
+
+  city.status = 'Pending';
+  city.assigned_agent = null;
+  agent.status = 'Idle';
+  return false;
 }
 
 // Scheduler partitioner splitting rule
@@ -2417,6 +2509,20 @@ async function killStaleChromeDriverProcesses() {
 async function allocationEngine() {
   if (!allocationEngineActive) return;
 
+  // 1. Sync runnerRegistry statuses with active WebSocket connections
+  runnerRegistry.forEach(r => {
+    const wsInfo = getConnectedWsRunner(r);
+    if (!wsInfo) {
+      if (r.status !== 'Running') {
+        r.status = 'Disconnected';
+      }
+    } else {
+      if (r.status === 'Disconnected' || r.status === 'Offline') {
+        r.status = 'Idle';
+      }
+    }
+  });
+
   // Concurrency bounds: Never launch more Chrome instances than active registered runners!
   const activeRunningCount = cityQueue.filter(c => c.status === 'Running').length;
   const maxAllowedInstances = Math.min(schedulerConfig.max_parallel_agents || 12, runnerRegistry.length);
@@ -2424,7 +2530,8 @@ async function allocationEngine() {
 
   // Auto-sync runners to agents array
   runnerRegistry.forEach(r => {
-    if (!agents.some(a => a.agent_name === r.agent_name)) {
+    let agent = agents.find(a => a.agent_name === r.agent_name);
+    if (!agent) {
       agents.push({
         agent_id: r.runner_id,
         portal_id: r.portal_id || null,
@@ -2435,10 +2542,17 @@ async function allocationEngine() {
         execution_id: r.execution_id || null,
         last_heartbeat: r.last_heartbeat || new Date()
       });
+    } else {
+      agent.status = r.status;
     }
   });
 
-  const idleRunners = runnerRegistry.filter(r => r.status === 'Idle');
+  // CRITICAL FIX: Only pick idle runners that have an ACTIVE WebSocket connection & fresh heartbeat!
+  const idleRunners = runnerRegistry.filter(r => {
+    if (r.status !== 'Idle') return false;
+    return isRunnerConnectedAndActive(r);
+  });
+
   if (idleRunners.length === 0) return;
 
   // Active States Tracking to enforce Distinct-State Allocation per User
