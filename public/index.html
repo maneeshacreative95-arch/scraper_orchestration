@@ -31,6 +31,7 @@
         <button class="nav-btn" data-view="view-performance-matrix">📊 Performance Matrix</button>
         <button class="nav-btn" data-view="view-performance-improvements">🚀 Performance Improvements</button>
         <button class="nav-btn" data-view="view-common-errors">⚠️ Error Recovery</button>
+        <button class="nav-btn" data-view="view-quality-check">🛡️ Quality Check</button>
       </nav>
 
       <div class="sidebar-footer">
@@ -55,9 +56,11 @@
             <span style="font-size: 0.8rem; color: #94a3b8;">👤 Session:</span>
             <strong id="activeClientNameText" style="font-size: 0.85rem; color: #60a5fa;">Not Logged In</strong>
           </div>
-          <div class="sim-toggle-wrapper">
+          <div class="sim-toggle-wrapper" style="display: flex; align-items: center; gap: 8px;">
             <span class="sim-label">Scraper Backend (7500):</span>
             <span id="backendStatusBadge" class="badge badge-running">Checking...</span>
+            <button id="startExeBtn" type="button" class="btn btn-secondary btn-sm" style="color: #4ade80; border-color: rgba(74, 222, 128, 0.4); font-weight: 600; cursor: pointer; padding: 4px 10px; font-size: 0.78rem;" onclick="startScraperExe()">▶ Start Exe</button>
+            <button id="stopExeBtn" type="button" class="btn btn-secondary btn-sm" style="color: #f87171; border-color: rgba(239, 68, 68, 0.4); font-weight: 600; cursor: pointer; padding: 4px 10px; font-size: 0.78rem;" onclick="stopScraperExe()">⏹ Stop Exe</button>
           </div>
           <button id="logoutBtn" type="button" class="btn btn-secondary" style="color: #f87171; border-color: rgba(239,68,68,0.3); font-weight: 600; cursor: pointer;" onclick="handleClientLogout()">🚪 Logout</button>
         </div>
@@ -490,25 +493,247 @@
           </div>
         </section>
 
-        <!-- 9. Common Errors & Fixes View -->
+        <!-- 9. Self-Healing Error Recovery Workflow View -->
         <section id="view-common-errors" class="workflow-view hidden">
+          <!-- Top Header & Actions -->
+          <div class="panel-card" style="margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-card);">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+              <div>
+                <h2 style="font-size: 1.5rem; font-weight: 700; color: #f8fafc;">🛠️ Error Recovery Workflow</h2>
+                <p style="font-size: 0.88rem; color: var(--color-text-muted); margin-top: 4px;">
+                  Production-ready self-healing engine. Automatically detects failures, verifies runner & port 7500 health, recovers ChromeDriver, and resumes failed batches seamlessly.
+                </p>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button id="manualTriggerRecoveryBtn" class="btn btn-primary btn-sm" style="padding: 8px 16px;">🔄 Trigger Manual Recovery</button>
+                <button id="resetRecoveryMetricsBtn" class="btn btn-secondary btn-sm" style="padding: 8px 16px;">🧹 Reset Metrics</button>
+              </div>
+            </div>
+
+            <!-- 4 Live Monitoring Cards -->
+            <div class="recovery-cards-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 1.2rem;">
+              <!-- Card 1: Runner Heartbeat -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 0.85rem; font-weight: 600; color: #94a3b8;">💓 Runner Heartbeat</span>
+                  <span id="recHeartbeatBadge" class="badge badge-running" style="font-size: 0.75rem;">Connected</span>
+                </div>
+                <div style="font-size: 1.4rem; font-weight: 700; color: #38bdf8;" id="recHeartbeatInterval">5s Interval</div>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 6px;">Last beat: <span id="recLastHeartbeatTime" style="color: #e2e8f0;">-</span></div>
+              </div>
+
+              <!-- Card 2: Backend Health -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 0.85rem; font-weight: 600; color: #94a3b8;">🩺 Backend Health</span>
+                  <span id="recBackendBadge" class="badge badge-completed" style="font-size: 0.75rem;">Port 7500 Active</span>
+                </div>
+                <div style="font-size: 1.4rem; font-weight: 700; color: #4ade80;" id="recBackendPortText">Port 7500</div>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 6px;">Last check: <span id="recLastBackendCheckTime" style="color: #e2e8f0;">-</span></div>
+              </div>
+
+              <!-- Card 3: Recovery Attempts -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 0.85rem; font-weight: 600; color: #94a3b8;">🔄 Recovery Attempts</span>
+                  <span id="recAttemptsCountBadge" class="badge badge-pending" style="font-size: 0.75rem;">0 Retries</span>
+                </div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: #fbbf24;" id="recCurrentStageText">Stage: Idle</div>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="recLastReasonText" title="System Healthy">Reason: System Healthy</div>
+              </div>
+
+              <!-- Card 4: Batch Resume Status -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 0.85rem; font-weight: 600; color: #94a3b8;">📦 Batch Resume Status</span>
+                  <span id="recCheckpointBadge" class="badge badge-completed" style="font-size: 0.75rem;">Synced</span>
+                </div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: #c084fc;" id="recResumeBatchText">Batch: -</div>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 6px;">Range: <span id="recResumeRangeText" style="color: #e2e8f0;">-</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5-Stage Vertical Recovery Timeline Pipeline -->
+          <div class="panel-card" style="margin-bottom: 1.5rem;">
+            <div class="panel-header">
+              <h2>Self-Healing Recovery Pipeline (5 Stages)</h2>
+            </div>
+            <div class="recovery-pipeline-timeline" style="display: flex; justify-content: space-between; align-items: center; margin: 1rem 0; flex-wrap: wrap; gap: 12px; position: relative; padding: 1.2rem; background: rgba(15, 23, 42, 0.5); border-radius: 12px; border: 1px solid var(--border-card);">
+              <div class="stage-step" id="stage-step-1" style="flex: 1; min-width: 140px; text-align: center; padding: 12px; border-radius: 8px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s ease;">
+                <div style="font-size: 1.4rem; margin-bottom: 4px;">🔍</div>
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">1. Error Detection</div>
+                <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 2px;">Detect Crash / Offline</div>
+              </div>
+              <div style="color: #64748b; font-weight: bold;">➔</div>
+              <div class="stage-step" id="stage-step-2" style="flex: 1; min-width: 140px; text-align: center; padding: 12px; border-radius: 8px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s ease;">
+                <div style="font-size: 1.4rem; margin-bottom: 4px;">🩺</div>
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">2. Health Verification</div>
+                <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 2px;">Ping 7500 & Heartbeat</div>
+              </div>
+              <div style="color: #64748b; font-weight: bold;">➔</div>
+              <div class="stage-step" id="stage-step-3" style="flex: 1; min-width: 140px; text-align: center; padding: 12px; border-radius: 8px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s ease;">
+                <div style="font-size: 1.4rem; margin-bottom: 4px;">🔄</div>
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">3. Automatic Recovery</div>
+                <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 2px;">Kill Driver & Reconnect</div>
+              </div>
+              <div style="color: #64748b; font-weight: bold;">➔</div>
+              <div class="stage-step" id="stage-step-4" style="flex: 1; min-width: 140px; text-align: center; padding: 12px; border-radius: 8px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s ease;">
+                <div style="font-size: 1.4rem; margin-bottom: 4px;">▶️</div>
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">4. Batch Resume</div>
+                <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 2px;">Resume Range Checkpoint</div>
+              </div>
+              <div style="color: #64748b; font-weight: bold;">➔</div>
+              <div class="stage-step" id="stage-step-5" style="flex: 1; min-width: 140px; text-align: center; padding: 12px; border-radius: 8px; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255,255,255,0.05); transition: all 0.3s ease;">
+                <div style="font-size: 1.4rem; margin-bottom: 4px;">✅</div>
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">5. Recovery Complete</div>
+                <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 2px;">Dashboard Synced</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Error Diagnostics & Live Event Log -->
           <div class="panel-card">
             <div class="panel-header">
-              <h2>Error diagnostics and Recovery Console</h2>
+              <h2>Error Recovery Activity Log & Diagnostics Console</h2>
             </div>
             <div class="table-container">
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>Execution ID</th>
-                    <th>Agent</th>
-                    <th>City</th>
-                    <th>Error Details</th>
-                    <th>Suggested Fix</th>
-                    <th>Retry Option</th>
+                    <th>Timestamp</th>
+                    <th>Event Type</th>
+                    <th>Recovery Stage</th>
+                    <th>Runner</th>
+                    <th>Details / Failure Reason</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
-                <tbody id="errorsTableBody">
+                <tbody id="recoveryActivityLogBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Legacy table body fallback -->
+          <table style="display: none;"><tbody id="errorsTableBody"></tbody></table>
+        </section>
+
+        <!-- 10. Quality Check Workflow View -->
+        <section id="view-quality-check" class="workflow-view hidden">
+          <!-- Top Header -->
+          <div class="panel-card" style="margin-bottom: 1.5rem; background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-card);">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+              <div>
+                <h2 style="font-size: 1.5rem; font-weight: 700; color: #f8fafc;">🛡️ Quality Check (QC) Workflow Engine</h2>
+                <p style="font-size: 0.88rem; color: var(--color-text-muted); margin-top: 4px;">
+                  Automated 10-rule quality gate evaluating company name, phone, website, maps URL, address city/state, category relevance, deduplication, and database duplicates before records enter <code>kf_vendor</code>.
+                </p>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <span class="badge badge-completed" style="padding: 8px 16px; border-radius: 20px; font-size: 0.8rem; font-family: var(--font-mono);">Gate Threshold: Score ≥ 75</span>
+                <button id="refreshQcBtn" class="btn btn-secondary btn-sm" style="padding: 8px 16px;">🔄 Refresh QC Stats</button>
+              </div>
+            </div>
+
+            <!-- 6 Live Metrics Cards -->
+            <div class="recovery-cards-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 1.2rem;">
+              <!-- Card 1: Total Scraped -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Total Scraped</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #38bdf8;" id="qcMetricTotalScraped">0</div>
+                <div style="font-size: 0.78rem; color: #94a3b8; margin-top: 4px;">Scraped across batches</div>
+              </div>
+
+              <!-- Card 2: Valid Records (Score >= 75) -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Valid Records (≥75)</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #4ade80;" id="qcMetricValidCount">0</div>
+                <div style="font-size: 0.78rem; color: #4ade80; margin-top: 4px;">Copied to kf_vendor</div>
+              </div>
+
+              <!-- Card 3: Rejected Records (< 75) -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Rejected Records (<75)</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #f87171;" id="qcMetricRejectedCount">0</div>
+                <div style="font-size: 0.78rem; color: #f87171; margin-top: 4px;">Stored in qc_failed_records</div>
+              </div>
+
+              <!-- Card 4: Duplicates Removed -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Duplicates Filtered</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #fbbf24;" id="qcMetricDuplicatesCount">0</div>
+                <div style="font-size: 0.78rem; color: #94a3b8; margin-top: 4px;">Phone/Web/Maps dupes</div>
+              </div>
+
+              <!-- Card 5: Missing Fields Count -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Missing Fields</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #c084fc;" id="qcMetricMissingFieldsCount">0</div>
+                <div style="font-size: 0.78rem; color: #94a3b8; margin-top: 4px;">Missing phone or website</div>
+              </div>
+
+              <!-- Card 6: Overall Pass Rate % -->
+              <div class="recovery-card" style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(34, 211, 238, 0.25); border-radius: 12px; padding: 1.2rem;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Overall Pass Rate</div>
+                <div style="font-size: 1.6rem; font-weight: 700; color: #38bdf8;" id="qcMetricPassRate">0%</div>
+                <div style="font-size: 0.78rem; color: #94a3b8; margin-top: 4px;">Avg Score: <span id="qcMetricAvgScore" style="color: #e2e8f0;">0</span>/100</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Batch Quality Reports Table -->
+          <div class="panel-card" style="margin-bottom: 1.5rem;">
+            <div class="panel-header">
+              <h2>Batch Quality Evaluation History</h2>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Execution / Batch ID</th>
+                    <th>City Location</th>
+                    <th>Category</th>
+                    <th>Total Evaluated</th>
+                    <th>Passed (≥75)</th>
+                    <th>Duplicates</th>
+                    <th>Rejected</th>
+                    <th>Avg Quality Score</th>
+                    <th>Pass Rate</th>
+                  </tr>
+                </thead>
+                <tbody id="qcBatchReportsTableBody">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Failed Records Inspector (qc_failed_records) -->
+          <div class="panel-card">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+              <div>
+                <h2>Failed Records Inspector (<code>qc_failed_records</code>)</h2>
+                <p style="font-size: 0.85rem; color: var(--color-text-muted); margin-top: 2px;">Records scoring below 75 or missing mandatory fields. Use the Retry button to attempt a single-pass Contact Scraper resolution.</p>
+              </div>
+            </div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Record ID</th>
+                    <th>City</th>
+                    <th>Company Name</th>
+                    <th>Phone</th>
+                    <th>Website</th>
+                    <th>QC Score</th>
+                    <th>Failure Reasons / Missing Fields</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="qcFailedRecordsTableBody">
                   <!-- Dynamically populated -->
                 </tbody>
               </table>

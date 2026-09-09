@@ -496,7 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cityQueueCardsContainer.innerHTML = `<div style="text-align: center; color: var(--color-text-muted); padding: 3rem; background: var(--bg-card); border: 1px dashed var(--border-card); border-radius: 16px;">Queue is empty. Enter a prompt above (e.g. "Run healthcare companies across South India") and click Analyze & Orchestrate.</div>`;
       } else {
         data.cityQueue.forEach(city => {
-          const badgeClass = city.status === 'Completed' ? 'badge-completed' : (city.status === 'Running' ? 'badge-running' : 'badge-pending');
+          const badgeClass = city.status === 'Completed' ? 'badge-completed' : (city.status === 'Running' ? 'badge-running' : (city.status === 'Queued' ? 'badge-queued' : 'badge-pending'));
           
           let actions = '';
           if (city.status === 'Pending') {
@@ -504,6 +504,8 @@ document.addEventListener('DOMContentLoaded', () => {
               <button class="btn btn-primary btn-sm" style="width: 100%; border-radius: 8px;" onclick="splitBatch('${city.city_id}')">⚡ Batch Split</button>
               <button class="btn btn-secondary btn-sm" style="width: 100%; border-radius: 8px; color: var(--color-error);" onclick="deleteCity('${city.city_id}')">Delete</button>
             `;
+          } else if (city.status === 'Queued') {
+            actions = `<span class="badge badge-queued" style="padding: 6px 12px; border-radius: 6px; font-size: 0.7rem;">QUEUED (WAITING LOCK)</span>`;
           } else if (city.status === 'Running') {
             actions = `<span class="badge badge-running" style="padding: 6px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 0.7rem;">ACTIVE RUNNING<br>${city.execution_id || ''}</span>`;
           } else {
@@ -716,8 +718,9 @@ document.addEventListener('DOMContentLoaded', () => {
           card.style.cssText = 'background: rgba(255,255,255,0.015); border: 1px solid var(--border-card); border-radius: 12px; padding: 1.25rem;';
 
           let statusBadgeClass = 'badge-running';
+          if (status === 'Queued') statusBadgeClass = 'badge-queued';
           if (status === 'Completed') statusBadgeClass = 'badge-completed';
-          if (status === 'Failed') statusBadgeClass = 'badge-error';
+          if (status === 'Failed') statusBadgeClass = 'badge-failed';
 
           const recoveryHtml = recovery ? `
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.8rem; color: #f87171;">
@@ -1026,7 +1029,12 @@ document.addEventListener('DOMContentLoaded', () => {
         <td style="color: var(--accent-color); font-weight: 500;">${r.current_workflow || '-'}</td>
         <td>${r.current_batch || '-'}</td>
         <td>
-          <div style="display: flex; gap: 5px;">
+          <div style="display: flex; gap: 5px; flex-wrap: nowrap;">
+            ${r.status === 'Running' ? `
+              <button class="btn btn-secondary btn-sm" style="color: #f87171; border-color: rgba(239,68,68,0.4); font-weight: 600;" onclick="stopRunnerExecution('${r.runner_id}')">⏹ Stop</button>
+            ` : `
+              <button class="btn btn-secondary btn-sm" style="color: #4ade80; border-color: rgba(74,222,128,0.4); font-weight: 600;" onclick="startRunnerExecution('${r.runner_id}')">▶ Start</button>
+            `}
             <button class="btn btn-secondary btn-sm" onclick="sendRunnerHeartbeat('${r.runner_id}')">Heartbeat</button>
             <button class="btn btn-secondary btn-sm" style="color: var(--color-error);" onclick="deleteRunner('${r.runner_id}')">Delete</button>
           </div>
@@ -1035,6 +1043,60 @@ document.addEventListener('DOMContentLoaded', () => {
       runnerRegistryTableBody.appendChild(tr);
     });
   }
+
+  window.startScraperExe = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/exe/start`, { method: 'POST' });
+      const data = await res.json();
+      alert(data.message || 'Scraper Executable starting...');
+      setTimeout(fetchStatus, 1000);
+    } catch (err) {
+      alert('Error starting executable: ' + err.message);
+    }
+  };
+
+  window.stopScraperExe = async () => {
+    if (confirm('Stop Scraper Executable and cancel all running tasks?')) {
+      try {
+        const res = await fetch(`${API_BASE}/api/exe/stop`, { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'Scraper Executable stopped.');
+        setTimeout(fetchStatus, 1000);
+      } catch (err) {
+        alert('Error stopping executable: ' + err.message);
+      }
+    }
+  };
+
+  window.startRunnerExecution = async (runnerId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/runners/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runner_id: runnerId })
+      });
+      const data = await res.json();
+      fetchStatus();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  window.stopRunnerExecution = async (runnerId) => {
+    if (confirm(`Stop execution for runner ${runnerId}?`)) {
+      try {
+        const res = await fetch(`${API_BASE}/api/runners/stop`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runner_id: runnerId })
+        });
+        const data = await res.json();
+        fetchStatus();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
 
   window.sendRunnerHeartbeat = async (runnerId) => {
     try {
@@ -1238,7 +1300,268 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Self-Healing Error Recovery View Renderer
+  async function fetchRecoveryStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/api/recovery/status`, { headers: getClientHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.success) return;
+
+      const cards = data.cards || {};
+      const state = data.recovery_state || {};
+
+      // 1. Runner Heartbeat Card
+      const recHeartbeatBadge = document.getElementById('recHeartbeatBadge');
+      const recLastHeartbeatTime = document.getElementById('recLastHeartbeatTime');
+      if (cards.runner_heartbeat) {
+        if (recHeartbeatBadge) {
+          recHeartbeatBadge.textContent = cards.runner_heartbeat.status;
+          recHeartbeatBadge.className = cards.runner_heartbeat.status === 'Connected' ? 'badge badge-completed' : (cards.runner_heartbeat.status === 'Reconnecting' ? 'badge badge-running' : 'badge badge-failed');
+        }
+        if (recLastHeartbeatTime) recLastHeartbeatTime.textContent = cards.runner_heartbeat.last_timestamp || '-';
+      }
+
+      // 2. Backend Health Card
+      const recBackendBadge = document.getElementById('recBackendBadge');
+      const recLastBackendCheckTime = document.getElementById('recLastBackendCheckTime');
+      if (cards.backend_health) {
+        if (recBackendBadge) {
+          recBackendBadge.textContent = cards.backend_health.status === 'Running' ? 'Port 7500 Active' : 'Port 7500 Down';
+          recBackendBadge.className = cards.backend_health.status === 'Running' ? 'badge badge-completed' : 'badge badge-failed';
+        }
+        if (recLastBackendCheckTime) recLastBackendCheckTime.textContent = cards.backend_health.last_check || '-';
+      }
+
+      // 3. Recovery Attempts Card
+      const recAttemptsCountBadge = document.getElementById('recAttemptsCountBadge');
+      const recCurrentStageText = document.getElementById('recCurrentStageText');
+      const recLastReasonText = document.getElementById('recLastReasonText');
+      if (cards.recovery_attempts) {
+        if (recAttemptsCountBadge) recAttemptsCountBadge.textContent = `${cards.recovery_attempts.count || 0} Retries`;
+        if (recCurrentStageText) recCurrentStageText.textContent = `Stage: ${cards.recovery_attempts.stage || 'Idle'}`;
+        if (recLastReasonText) {
+          recLastReasonText.textContent = `Reason: ${cards.recovery_attempts.last_reason || 'System Healthy'}`;
+          recLastReasonText.title = cards.recovery_attempts.last_reason || 'System Healthy';
+        }
+      }
+
+      // 4. Batch Resume Checkpoint Card
+      const recCheckpointBadge = document.getElementById('recCheckpointBadge');
+      const recResumeBatchText = document.getElementById('recResumeBatchText');
+      const recResumeRangeText = document.getElementById('recResumeRangeText');
+      if (cards.batch_resume_status) {
+        if (recCheckpointBadge) recCheckpointBadge.textContent = cards.batch_resume_status.checkpoint || 'Synced';
+        if (recResumeBatchText) recResumeBatchText.textContent = `Batch: ${cards.batch_resume_status.batch || '-'}`;
+        if (recResumeRangeText) recResumeRangeText.textContent = cards.batch_resume_status.range || '-';
+      }
+
+      // Highlight 5-Stage Timeline Steps
+      const stageMap = {
+        'Error Detection': 1,
+        'Health Verification': 2,
+        'Automatic Recovery': 3,
+        'Batch Resume': 4,
+        'Recovery Complete': 5
+      };
+
+      const currentStageNum = stageMap[state.current_recovery_stage] || 0;
+
+      for (let i = 1; i <= 5; i++) {
+        const stepEl = document.getElementById(`stage-step-${i}`);
+        if (stepEl) {
+          if (i === currentStageNum) {
+            stepEl.className = 'stage-step stage-active';
+          } else if (i < currentStageNum || currentStageNum === 5) {
+            stepEl.className = 'stage-step stage-completed';
+          } else {
+            stepEl.className = 'stage-step';
+          }
+        }
+      }
+
+      // Activity Log Table Render
+      const recoveryActivityLogBody = document.getElementById('recoveryActivityLogBody');
+      if (recoveryActivityLogBody) {
+        const recoveries = data.active_recoveries || [];
+        if (recoveries.length === 0) {
+          recoveryActivityLogBody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--color-text-muted);">No error recovery events recorded yet. All services operational.</td></tr>`;
+        } else {
+          recoveryActivityLogBody.innerHTML = recoveries.map(rec => `
+            <tr>
+              <td style="font-family: var(--font-mono); font-size: 0.8rem; color: #94a3b8; white-space: nowrap;">${rec.timestamp || '-'}</td>
+              <td><span class="badge badge-running" style="font-size: 0.75rem;">${rec.event_type || 'Recovery Event'}</span></td>
+              <td style="font-weight: 600; color: #60a5fa;">${rec.stage || '-'}</td>
+              <td><code>${rec.runner_id || 'runner_1572'}</code></td>
+              <td style="color: #cbd5e1; font-size: 0.82rem;">${rec.details || '-'}</td>
+              <td><button class="btn btn-secondary btn-sm" onclick="retryRecoveryBatch()">Retry</button></td>
+            </tr>
+          `).join('');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching recovery status:', err);
+    }
+  }
+
+  // Manual Trigger & Reset Button Event Handlers
+  const manualTriggerRecoveryBtn = document.getElementById('manualTriggerRecoveryBtn');
+  if (manualTriggerRecoveryBtn) {
+    manualTriggerRecoveryBtn.addEventListener('click', async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/recovery/retry`, {
+          method: 'POST',
+          headers: { ...getClientHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (res.ok) fetchRecoveryStatus();
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  const resetRecoveryMetricsBtn = document.getElementById('resetRecoveryMetricsBtn');
+  if (resetRecoveryMetricsBtn) {
+    resetRecoveryMetricsBtn.addEventListener('click', async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/recovery/reset`, {
+          method: 'POST',
+          headers: getClientHeaders()
+        });
+        if (res.ok) fetchRecoveryStatus();
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  window.retryRecoveryBatch = async () => {
+    try {
+      await fetch(`${API_BASE}/api/recovery/retry`, {
+        method: 'POST',
+        headers: { ...getClientHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      fetchRecoveryStatus();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Quality Check (QC) Workflow View Renderer
+  async function fetchQcSummary() {
+    try {
+      const res = await fetch(`${API_BASE}/api/qc/summary`, { headers: getClientHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.success) return;
+
+      const m = data.metrics || {};
+
+      // 1. Update Metrics Cards
+      const qcMetricTotalScraped = document.getElementById('qcMetricTotalScraped');
+      const qcMetricValidCount = document.getElementById('qcMetricValidCount');
+      const qcMetricRejectedCount = document.getElementById('qcMetricRejectedCount');
+      const qcMetricDuplicatesCount = document.getElementById('qcMetricDuplicatesCount');
+      const qcMetricMissingFieldsCount = document.getElementById('qcMetricMissingFieldsCount');
+      const qcMetricPassRate = document.getElementById('qcMetricPassRate');
+      const qcMetricAvgScore = document.getElementById('qcMetricAvgScore');
+
+      if (qcMetricTotalScraped) qcMetricTotalScraped.textContent = (m.totalScraped || 0).toLocaleString();
+      if (qcMetricValidCount) qcMetricValidCount.textContent = (m.validRecords || 0).toLocaleString();
+      if (qcMetricRejectedCount) qcMetricRejectedCount.textContent = (m.rejectedRecords || 0).toLocaleString();
+      if (qcMetricDuplicatesCount) qcMetricDuplicatesCount.textContent = (m.duplicateCount || 0).toLocaleString();
+      if (qcMetricMissingFieldsCount) qcMetricMissingFieldsCount.textContent = (m.missingFieldsCount || 0).toLocaleString();
+      if (qcMetricPassRate) qcMetricPassRate.textContent = m.overallPassRate || '0%';
+      if (qcMetricAvgScore) qcMetricAvgScore.textContent = m.overallAvgScore || 0;
+
+      // 2. Render Batch Reports Table
+      const qcBatchReportsTableBody = document.getElementById('qcBatchReportsTableBody');
+      if (qcBatchReportsTableBody) {
+        const reports = data.batchReports || [];
+        if (reports.length === 0) {
+          qcBatchReportsTableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--color-text-muted);">No batch quality evaluations recorded yet. Run a scraping batch to trigger automated QC evaluation.</td></tr>`;
+        } else {
+          qcBatchReportsTableBody.innerHTML = reports.map(r => `
+            <tr>
+              <td style="font-family: var(--font-mono); font-size: 0.8rem; color: #94a3b8;">${r.timestamp || '-'}</td>
+              <td><code>${r.batch_id || '-'}</code></td>
+              <td><strong>${r.city || '-'}</strong></td>
+              <td>${r.category || 'General'}</td>
+              <td><strong>${(r.totalScraped || 0).toLocaleString()}</strong></td>
+              <td><span style="color: #4ade80; font-weight: 600;">${(r.validCount || 0).toLocaleString()}</span></td>
+              <td><span style="color: #fbbf24; font-weight: 600;">${(r.duplicateCount || 0).toLocaleString()}</span></td>
+              <td><span style="color: #f87171; font-weight: 600;">${(r.rejectedCount || 0).toLocaleString()}</span></td>
+              <td><strong style="color: #38bdf8;">${r.avgScore || 0} / 100</strong></td>
+              <td><span class="badge ${parseInt(r.passRate) >= 70 ? 'badge-completed' : 'badge-failed'}">${r.passRate || '0%'}</span></td>
+            </tr>
+          `).join('');
+        }
+      }
+
+      // 3. Render Failed Records Inspector Table (qc_failed_records)
+      const qcFailedRecordsTableBody = document.getElementById('qcFailedRecordsTableBody');
+      if (qcFailedRecordsTableBody) {
+        const failed = data.failedRecords || [];
+        if (failed.length === 0) {
+          qcFailedRecordsTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--color-text-muted);">No failed/rejected records in <code>qc_failed_records</code>. All batch outputs met quality standards.</td></tr>`;
+        } else {
+          qcFailedRecordsTableBody.innerHTML = failed.map(row => {
+            const scoreColor = (row.quality_score || 0) >= 50 ? '#fbbf24' : '#f87171';
+            return `
+              <tr>
+                <td><code>${row.id}</code></td>
+                <td><strong>${row.city || '-'}</strong></td>
+                <td><strong style="color: #f8fafc;">${row.company_name || '-'}</strong></td>
+                <td>${row.phone ? `<code>${row.phone}</code>` : '<span style="color: #f87171;">Missing</span>'}</td>
+                <td>${row.website ? `<a href="${row.website}" target="_blank" style="color: #60a5fa; font-size: 0.82rem;">${row.website.substring(0, 25)}...</a>` : '<span style="color: #f87171;">Missing</span>'}</td>
+                <td><strong style="color: ${scoreColor};">${row.quality_score || 0} / 100</strong></td>
+                <td style="color: #cbd5e1; font-size: 0.82rem;">${row.failure_reasons || 'Quality score below 75'}</td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" style="font-size: 0.75rem; padding: 4px 10px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" onclick="retryQcRecord('${row.id}')">🔄 Retry Contact</button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching QC summary:', err);
+    }
+  }
+
+  // Refresh QC Button Handler
+  const refreshQcBtn = document.getElementById('refreshQcBtn');
+  if (refreshQcBtn) {
+    refreshQcBtn.addEventListener('click', () => fetchQcSummary());
+  }
+
+  window.retryQcRecord = async (failedId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/qc/retry-contact`, {
+        method: 'POST',
+        headers: { ...getClientHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ failed_id: failedId })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert(`QC Contact Retry Initiated!\n\nTarget: ${data.target.company_name}\nAssigned Runner: ${data.assigned_runner}`);
+        fetchQcSummary();
+      } else {
+        alert(data.error || 'Failed to trigger QC retry.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error triggering retry: ' + err.message);
+    }
+  };
+
   // Polling
   fetchStatus();
+  fetchRecoveryStatus();
+  fetchQcSummary();
   setInterval(fetchStatus, 5000);
+  setInterval(fetchRecoveryStatus, 5000);
+  setInterval(fetchQcSummary, 5000);
 });

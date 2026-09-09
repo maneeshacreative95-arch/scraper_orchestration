@@ -446,6 +446,7 @@ body {
 }
 
 .badge-pending { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.badge-queued { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
 .badge-running { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
 .badge-completed { background: rgba(16, 185, 129, 0.15); color: #10b981; }
 .badge-failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
@@ -674,3 +675,33 @@ body {
 .data-table tr:hover {
   background: rgba(255, 255, 255, 0.01);
 }
+
+/* Self-Healing Recovery Workflow Styles */
+.recovery-card {
+  transition: all 0.3s ease;
+}
+
+.recovery-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.stage-step.stage-active {
+  background: var(--accent-glow) !important;
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 0 14px var(--accent-glow);
+  transform: scale(1.03);
+}
+
+.stage-step.stage-completed {
+  background: var(--color-success-bg) !important;
+  border-color: var(--color-success) !important;
+  color: var(--color-success) !important;
+}
+
+.stage-step.stage-failed {
+  background: var(--color-error-bg) !important;
+  border-color: var(--color-error) !important;
+  color: var(--color-error) !important;
+}
+
