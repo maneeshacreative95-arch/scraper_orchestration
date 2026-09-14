@@ -1,6 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const fsClassic = fs;
+const os = require('os');
+const https = require('https');
 const mysql = require('mysql2/promise');
 const { exec } = require('child_process');
 const util = require('util');
@@ -4005,10 +4009,80 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Attach HTTP Server & Dual WebSocket Listener (Ports 7800 and 7700)
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// Get hostname to detect environment
 
+const HOSTNAME = os.hostname().toUpperCase();
+
+// Check if running on local/development machine or production
+const IS_LOCAL = ['MSI', 'I3ADMIN-PRECISION-TOWER-5810', 'DESKTOP-KAL0REJ'].some(keyword =>
+  HOSTNAME.includes(keyword)
+);
+
+// Production domain from environment or default
+const PRODUCTION_DOMAIN = process.env.PRODUCTION_DOMAIN || 'myblocks.in';
+const IS_PRODUCTION = HOSTNAME.toLowerCase().includes(PRODUCTION_DOMAIN.toLowerCase()) || !IS_LOCAL;
+
+let server;
+
+if (IS_PRODUCTION && !IS_LOCAL) {
+  // SSL Configuration for Production
+  const SSL_KEY_PATH = `/etc/letsencrypt/live/${PRODUCTION_DOMAIN}/privkey.pem`;
+  const SSL_CERT_PATH = `/etc/letsencrypt/live/${PRODUCTION_DOMAIN}/fullchain.pem`;
+
+  // Check if SSL certificates exist
+  if (fsClassic.existsSync(SSL_KEY_PATH) && fsClassic.existsSync(SSL_CERT_PATH)) {
+    console.log(`🔒 SSL Enabled - Running in PRODUCTION mode with HTTPS`);
+    console.log(`   Certificate: ${SSL_CERT_PATH}`);
+    console.log(`   Private Key: ${SSL_KEY_PATH}`);
+
+    // Create HTTPS server
+    const privateKey = fsClassic.readFileSync(SSL_KEY_PATH, 'utf8');
+    const certificate = fsClassic.readFileSync(SSL_CERT_PATH, 'utf8');
+    const credentials = { key: privateKey, cert: certificate };
+
+    server = https.createServer(credentials, app);
+    server.requestTimeout = 300000; // 5 minutes
+    server.headersTimeout = 305000;
+    server.keepAliveTimeout = 300000;
+    server.listen(PORT, () => {
+      console.log(`🚀  API running on https://0.0.0.0:${PORT}`);
+      console.log(`   Environment: PRODUCTION (HTTPS)`);
+      console.log(`   Hostname: ${HOSTNAME}`);
+    });
+  } else {
+    // SSL certificates not found, fall back to HTTP
+    console.log(`⚠️ SSL certificates not found at expected paths:`);
+    console.log(`   Key: ${SSL_KEY_PATH}`);
+    console.log(`   Cert: ${SSL_CERT_PATH}`);
+    console.log(`   Falling back to HTTP mode`);
+
+    server = http.createServer(app);
+    server.requestTimeout = 300000; // 5 minutes
+    server.headersTimeout = 305000;
+    server.keepAliveTimeout = 300000;
+    server.listen(PORT, () => {
+      console.log(`🚀  API running on http://0.0.0.0:${PORT}`);
+      console.log(`   Environment: PRODUCTION (HTTP fallback - SSL certs not found)`);
+      console.log(`   Hostname: ${HOSTNAME}`);
+    });
+  }
+} else {
+  // Local/Dev Mode - HTTP only
+  console.log(`🔓 Running in LOCAL/DEV mode with HTTP (no SSL)`);
+
+  server = http.createServer(app);
+  server.requestTimeout = 300000; // 5 minutes
+  server.headersTimeout = 305000;
+  server.keepAliveTimeout = 300000;
+  server.listen(PORT, () => {
+    console.log(`🚀  API running on http://0.0.0.0:${PORT}`);
+    console.log(`   Environment: LOCAL/DEV (HTTP)`);
+    console.log(`   Hostname: ${HOSTNAME}`);
+  });
+}
+
+// Attach Dual WebSocket Listener (Ports 7800 and 7700)
+const wss = new WebSocketServer({ server });
 wss.on('connection', handleWsConnection);
 
 const WS_PORT = process.env.WS_PORT || 7700;
@@ -4020,7 +4094,3 @@ try {
 } catch (err) {
   console.log(`[WEBSOCKET] Dedicated port ${WS_PORT} notice: ${err.message}. WebSocket accessible via main server port ${PORT}.`);
 }
-
-server.listen(PORT, () => {
-  console.log(`Dynamic standalone Orchestrator active on port ${PORT} (WebSocket endpoints live at ws://127.0.0.1:${PORT}/ws & ws://127.0.0.1:${WS_PORT}/ws)`);
-});
