@@ -1376,35 +1376,32 @@ app.get('/api/status', async (req, res) => {
   let backendStatus = 'Offline';
   let scraperExecutions = [];
 
+  const activeWsCount = Array.from(wsConnectedRunners.values()).filter(w => w.ws && w.ws.readyState === 1).length;
+  const totalWsCount = wsConnectedRunners.size;
+
   try {
     const exeActive = await isProcessRunning('scraperrun_v1.0.8.exe');
-    try {
-      const response = await fetch(`${SCRAPER_MANAGER_URL}/executions`, {
-        headers: { 'X-User-Id': String(defaultScraperConfig.user_id), 'X-Firm-Id': '5' },
-        signal: AbortSignal.timeout(2000)
-      });
-      if (response.ok) {
-        backendOnline = true;
-        backendStatus = '🟢 Scraper Manager Connected';
-      } else if (exeActive) {
-        backendOnline = true;
-        backendStatus = '🟢 Scraper Executable Active';
-      } else {
-        backendOnline = false;
-        backendStatus = '🔴 Scraper Manager Offline';
-      }
-    } catch (err) {
-      if (exeActive) {
-        backendOnline = true;
-        backendStatus = '🟢 Scraper Executable Active';
-      } else {
-        backendOnline = false;
-        backendStatus = '🔴 Scraper Manager Offline';
-      }
+    if (activeWsCount > 0) {
+      backendOnline = true;
+      backendStatus = `🟢 ${activeWsCount} Runner${activeWsCount > 1 ? 's' : ''} Connected`;
+    } else if (exeActive) {
+      backendOnline = true;
+      backendStatus = '🟢 Local Executable Active';
+    } else if (totalWsCount > 0) {
+      backendOnline = false;
+      backendStatus = '🟡 Runners Registered (Offline)';
+    } else {
+      backendOnline = false;
+      backendStatus = '🔴 No Runners Connected';
     }
   } catch (err) {
-    backendOnline = false;
-    backendStatus = 'Offline';
+    if (activeWsCount > 0) {
+      backendOnline = true;
+      backendStatus = `🟢 ${activeWsCount} Runner${activeWsCount > 1 ? 's' : ''} Connected`;
+    } else {
+      backendOnline = false;
+      backendStatus = '🔴 No Runners Connected';
+    }
   }
   backendOnlineGlobal = backendOnline;
 
