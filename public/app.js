@@ -10,13 +10,28 @@
   }
 })();
 
+// Detect host environment and configure backend URL
+function getApiBase() {
+  const host = window.location.host;
+  const href = window.location.href;
+  const pathname = window.location.pathname;
+
+  // When hosted on https://myblocks.in/scrapper-agent/ or myblocks.in
+  if (host.includes('myblocks.in') || href.includes('myblocks.in/scrapper-agent') || pathname.includes('/scrapper-agent')) {
+    return 'https://myblocks.in:7800';
+  }
+  return '';
+}
+
+const API_BASE = getApiBase();
+
 // Global Logout Handler — defined at top level for instant availability
 window.handleClientLogout = function() {
   console.log('[CLIENT AUTH] Logging out session...');
   try {
     const token = localStorage.getItem('orchestrator_session_token');
     if (token) {
-      fetch('/api/auth/logout', {
+      fetch(`${API_BASE}/api/auth/logout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -32,7 +47,11 @@ window.handleClientLogout = function() {
   const loginModal = document.getElementById('clientLoginModal');
   if (loginModal) loginModal.style.display = 'flex';
   
-  window.location.href = '/login';
+  if (window.location.pathname.includes('/scrapper-agent')) {
+    window.location.href = '/scrapper-agent/login';
+  } else {
+    window.location.href = '/login';
+  }
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -169,8 +188,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Fetch / Sync loop
-  // Fetch / Sync loop
-  const API_BASE = '';
   let configInitialized = false;
 
   const globalClientSelector = document.getElementById('globalClientSelector');
@@ -302,7 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const res = await fetch('/api/auth/register', {
+        const res = await fetch(`${API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, username, password })
@@ -370,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const res = await fetch('/api/auth/login', {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password })
