@@ -12,18 +12,29 @@
 
 // Detect host environment and configure backend URL
 function getApiBase() {
-  const host = window.location.host;
-  const href = window.location.href;
-  const pathname = window.location.pathname;
+  const origin = (window.location.origin || '').toLowerCase();
+  const host = (window.location.host || '').toLowerCase();
+  const hostname = (window.location.hostname || '').toLowerCase();
+  const href = (window.location.href || '').toLowerCase();
+  const pathname = (window.location.pathname || '').toLowerCase();
+  const port = window.location.port;
 
-  // When hosted on https://myblocks.in/scrapper-agent/ or myblocks.in
-  if (host.includes('myblocks.in') || href.includes('myblocks.in/scrapper-agent') || pathname.includes('/scrapper-agent')) {
-    return 'https://myblocks.in:7800';
+  // If already directly running on port 7800
+  if (port === '7800') {
+    return '';
   }
-  return '';
+
+  // Local development if running on another local dev port (e.g. 3000/5173/5500)
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return 'http://127.0.0.1:7800';
+  }
+
+  // Any production host, myblocks domain, scrapper-agent path, or reverse proxy
+  return 'https://myblocks.in:7800';
 }
 
 const API_BASE = getApiBase();
+console.log(`[ORCHESTRATOR CLIENT] Active API Base URL: ${API_BASE || '(current host)'}`);
 
 // Global Logout Handler — defined at top level for instant availability
 window.handleClientLogout = function() {
