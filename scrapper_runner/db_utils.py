@@ -23,13 +23,11 @@ API_PORT = int(os.getenv("PORT", 7500))
 BASE_URL = os.getenv("BASE_URL", f"http://127.0.0.1:{API_PORT}")
 
 # WebSocket & Orchestrator Configuration
-#ORCHESTRATOR_WS_URL = os.getenv("ORCHESTRATOR_WS_URL", "ws://127.0.0.1:7700/ws")
-ORCHESTRATOR_WS_URL = os.getenv("ORCHESTRATOR_WS_URL","ws://61.2.142.91:7700/ws")
+ORCHESTRATOR_WS_URL = os.getenv("ORCHESTRATOR_WS_URL", "wss://myblocks.in:7800")
 RUNNER_ID = os.getenv("RUNNER_ID", "runner_1572")
 RUNNER_NAME = os.getenv("RUNNER_NAME", "Manisha (Local PC)")
 CLIENT_ID = os.getenv("CLIENT_ID", "1572")
-#SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")
-SERVER_IP = os.getenv("SERVER_IP", "61.2.142.91")
+SERVER_IP = os.getenv("SERVER_IP", "myblocks.in")
 
 def get_db_connection():
     return mysql.connector.connect(
