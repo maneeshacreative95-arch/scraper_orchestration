@@ -297,8 +297,19 @@ app.post('/api/auth/register', async (req, res) => {
   // Attempt database registration in user_table if possible
   try {
     await poolQuery(
-      `INSERT INTO user_table (user_id, email, firstname, lastname, password, privilege, is_active)
-       VALUES (?, ?, ?, ?, ?, 'client', 1)`,
+      `INSERT INTO user_table (
+        user_id, email, firstname, lastname, password, privilege,
+        is_superuser, is_staff, is_active,
+        address1, address2, city, state, country, postalCode,
+        dayPhone, evenPhone, cellphone, fax, nativeState,
+        security_question, answer, settings_enabled
+      ) VALUES (
+        ?, ?, ?, ?, ?, 'client',
+        0, 0, 1,
+        '', '', '', '', '', '',
+        '', '', '', '', '',
+        '', '', 0
+      )`,
       [newClientId, `${cleanUser}@client.com`, cleanName, '', cleanPass]
     );
     console.log(`[CLIENT AUTH] Registered new user '${cleanUser}' (Client ID: ${newClientId}) in DB user_table.`);
