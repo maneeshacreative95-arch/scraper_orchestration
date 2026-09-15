@@ -608,13 +608,16 @@ function handleWsConnection(ws, req) {
           status: 'Idle'
         });
 
+        const parsedClientId = parseInt(data.client_id, 10) || 1572;
+
         let regItem = runnerRegistry.find(r => 
           r.runner_id === runnerId || 
-          r.agent_name === data.runner_name || 
-          (parseInt(r.client_id, 10) === (parseInt(data.client_id, 10) || 1572) && (r.runner_id === 'r_1' || r.agent_name.includes('Manisha')))
+          (r.agent_name === data.runner_name && parseInt(r.client_id, 10) === parsedClientId)
         );
         if (regItem) {
           regItem.runner_id = runnerId;
+          regItem.client_id = parsedClientId;
+          regItem.agent_name = data.runner_name || regItem.agent_name;
           regItem.status = 'Idle';
           regItem.last_heartbeat = new Date();
           regItem.host_ip = `${data.server_ip || '127.0.0.1'}:${data.port || 7500}`;
@@ -624,7 +627,7 @@ function handleWsConnection(ws, req) {
             server_name: data.runner_name || `Server (${data.server_ip || '127.0.0.1'})`,
             host_ip: `${data.server_ip || '127.0.0.1'}:${data.port || 7500}`,
             agent_name: data.runner_name || runnerId,
-            client_id: parseInt(data.client_id, 10) || 1572,
+            client_id: parsedClientId,
             status: 'Idle',
             last_heartbeat: new Date(),
             current_workflow: null,
