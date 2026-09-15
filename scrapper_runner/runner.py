@@ -22,7 +22,8 @@ logger = logging.getLogger("scrapper_runner")
 # Global state tracking runner status ("idle" or "running")
 RUNNER_STATE = {
     "status": "idle",
-    "current_task": None
+    "current_task": None,
+    "current_execution_id": None
 }
 
 def get_next_unprocessed_category(portal_id):
@@ -58,17 +59,36 @@ def get_next_unprocessed_category(portal_id):
 def stop_local_scraper(execution_id=None, username=None):
     """
     Stops local scraper processes using valid backend endpoints:
-    1. POST /execution/{execution_id}/stop (for batch execution)
-    2. POST /api/stop-scraper (for hotels/basic scraper with username)
+    1. Discovers any active execution_id via GET /executions or RUNNER_STATE
+    2. Calls POST /execution/{execution_id}/stop on each active execution
+    3. Calls POST /api/stop-scraper for active user session
     """
+    target_ids = set()
     if execution_id:
+        target_ids.add(str(execution_id))
+    if RUNNER_STATE.get("current_execution_id"):
+        target_ids.add(str(RUNNER_STATE["current_execution_id"]))
+
+    # Query local backend for any active/running executions
+    try:
+        r = requests.get(f"{BASE_URL}/executions", timeout=5)
+        if r.status_code == 200:
+            for item in r.json().get("executions", []):
+                if item.get("status") in ("running", "starting", "stopping", "pending"):
+                    target_ids.add(str(item.get("execution_id")))
+    except Exception:
+        pass
+
+    # Stop all target LeaderManager executions
+    for eid in target_ids:
+        if not eid:
+            continue
         try:
-            r = requests.post(f"{BASE_URL}/execution/{execution_id}/stop", json={}, timeout=5)
+            r = requests.post(f"{BASE_URL}/execution/{eid}/stop", json={}, timeout=5)
             if r.status_code == 200:
-                logger.info(f"Successfully stopped execution '{execution_id}' via /execution/{execution_id}/stop")
-                return
+                logger.info(f"Successfully stopped LeaderManager execution '{eid}' via /execution/{eid}/stop")
         except Exception as e:
-            logger.warning(f"Notice stopping execution '{execution_id}': {e}")
+            logger.warning(f"Notice stopping execution '{eid}': {e}")
 
     # Targeted user-based stop scraper call for active user
     target_user = str(username or CLIENT_ID or "919")
@@ -78,6 +98,8 @@ def stop_local_scraper(execution_id=None, username=None):
             logger.info(f"Successfully sent stop signal for user '{target_user}'.")
     except Exception:
         pass
+
+    RUNNER_STATE["current_execution_id"] = None
 
 def trigger_backend_scrape(emp_id, portal_id, category=None, city="", batch_id="auto_batch_1", total_contacts=1000, start_from=1, batch_size=1000):
     """
@@ -124,10 +146,11 @@ def trigger_backend_scrape(emp_id, portal_id, category=None, city="", batch_id="
         if response.status_code == 200:
             data = response.json()
             execution_id = data.get("execution_id")
+            RUNNER_STATE["current_execution_id"] = execution_id
             logger.info(f"Local backend accepted execution. execution_id='{execution_id}'")
             return execution_id
         elif response.status_code == 400 and "already running" in response.text.lower():
-            logger.warning("Local backend returned 400 'Scraper is already running'. Attempting reset via /api/stop-scraper...")
+            logger.warning("Local backend returned 400 'Scraper is already running'. Attempting reset via stop_local_scraper...")
             try:
                 stop_local_scraper(username=emp_id)
                 time.sleep(2)
@@ -139,6 +162,7 @@ def trigger_backend_scrape(emp_id, portal_id, category=None, city="", batch_id="
             if retry_resp.status_code == 200:
                 data = retry_resp.json()
                 execution_id = data.get("execution_id")
+                RUNNER_STATE["current_execution_id"] = execution_id
                 logger.info(f"Local backend accepted execution after reset! execution_id='{execution_id}'")
                 return execution_id
             else:

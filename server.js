@@ -2848,6 +2848,25 @@ app.post('/api/exe/stop', async (req, res) => {
     try { await execPromise(`taskkill /F /IM scraperrun_v1.0.8.exe /T`); } catch (e) {}
     try { await execPromise(`taskkill /F /IM chromedriver.exe /T`); } catch (e) {}
 
+    // Find and stop active executions on local scraper manager
+    try {
+      const execRes = await fetch(`${SCRAPER_MANAGER_URL}/executions`, { signal: AbortSignal.timeout(2000) });
+      if (execRes.ok) {
+        const execData = await execRes.json();
+        const activeList = (execData.executions || []).filter(x => ['running', 'starting', 'stopping', 'pending'].includes(x.status));
+        for (const it of activeList) {
+          try {
+            await fetch(`${SCRAPER_MANAGER_URL}/execution/${it.execution_id}/stop`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+              signal: AbortSignal.timeout(2000)
+            });
+          } catch(e) {}
+        }
+      }
+    } catch (e) {}
+
     try {
       await fetch(`${SCRAPER_MANAGER_URL}/api/stop-scraper`, {
         method: 'POST',
@@ -2926,7 +2945,7 @@ app.post('/api/runners/stop', async (req, res) => {
   wsConnectedRunners.forEach((info, id) => {
     if (id === runner.runner_id || info.runner_name === runner.agent_name || (runner.agent_name && runner.agent_name.includes(info.runner_name))) {
       if (info.ws && info.ws.readyState === 1) {
-        try { info.ws.send(JSON.stringify({ event: 'stop_execution', runner_id: runner.runner_id })); } catch(e){}
+        try { info.ws.send(JSON.stringify({ event: 'stop_execution', runner_id: runner.runner_id, execution_id: runner.execution_id })); } catch(e){}
       }
     }
   });
@@ -2941,6 +2960,25 @@ app.post('/api/runners/stop', async (req, res) => {
       });
     } catch (e) {}
   }
+
+  try {
+    const execRes = await fetch(`${SCRAPER_MANAGER_URL}/executions`, { signal: AbortSignal.timeout(2000) });
+    if (execRes.ok) {
+      const execData = await execRes.json();
+      const activeList = (execData.executions || []).filter(x => ['running', 'starting', 'stopping', 'pending'].includes(x.status));
+      for (const it of activeList) {
+        try {
+          await fetch(`${SCRAPER_MANAGER_URL}/execution/${it.execution_id}/stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(2000)
+          });
+        } catch(e) {}
+      }
+    }
+  } catch(e) {}
+
   try {
     await fetch(`${SCRAPER_MANAGER_URL}/api/stop-scraper`, {
       method: 'POST',
