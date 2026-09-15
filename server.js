@@ -2867,15 +2867,6 @@ app.post('/api/exe/stop', async (req, res) => {
       }
     } catch (e) {}
 
-    try {
-      await fetch(`${SCRAPER_MANAGER_URL}/api/stop-scraper`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: String(defaultScraperConfig.user_id) }),
-        signal: AbortSignal.timeout(2000)
-      });
-    } catch (e) {}
-
     wsConnectedRunners.forEach((info) => {
       if (info.ws && info.ws.readyState === 1) {
         try { info.ws.send(JSON.stringify({ event: 'stop_execution', message: 'Stop requested by Administrator' })); } catch(e){}
@@ -2978,15 +2969,6 @@ app.post('/api/runners/stop', async (req, res) => {
       }
     }
   } catch(e) {}
-
-  try {
-    await fetch(`${SCRAPER_MANAGER_URL}/api/stop-scraper`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: runner.agent_name || String(defaultScraperConfig.user_id) }),
-      signal: AbortSignal.timeout(2000)
-    });
-  } catch (e) {}
 
   const runningCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && c.status === 'Running');
   if (runningCity) {

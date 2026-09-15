@@ -61,7 +61,6 @@ def stop_local_scraper(execution_id=None, username=None):
     Stops local scraper processes using valid backend endpoints:
     1. Discovers any active execution_id via GET /executions or RUNNER_STATE
     2. Calls POST /execution/{execution_id}/stop on each active execution
-    3. Calls POST /api/stop-scraper for active user session
     """
     target_ids = set()
     if execution_id:
@@ -89,15 +88,6 @@ def stop_local_scraper(execution_id=None, username=None):
                 logger.info(f"Successfully stopped LeaderManager execution '{eid}' via /execution/{eid}/stop")
         except Exception as e:
             logger.warning(f"Notice stopping execution '{eid}': {e}")
-
-    # Targeted user-based stop scraper call for active user
-    target_user = str(username or CLIENT_ID or "919")
-    try:
-        r = requests.post(f"{BASE_URL}/api/stop-scraper", json={"username": target_user}, timeout=3)
-        if r.status_code == 200:
-            logger.info(f"Successfully sent stop signal for user '{target_user}'.")
-    except Exception:
-        pass
 
     RUNNER_STATE["current_execution_id"] = None
 
