@@ -1,6 +1,6 @@
 // Immediate Auth Check on script load
 (function initAuthCheck() {
-  if (window.location.pathname.includes('/login') || window.location.search.includes('logout')) {
+  if ((window.location.pathname.includes('/login') || window.location.search.includes('logout')) && !window.location.search.includes('keepSession')) {
     try {
       localStorage.removeItem('orchestrator_session_token');
       localStorage.removeItem('orchestrator_session_data');
@@ -9,6 +9,20 @@
     } catch(e) {}
   }
 })();
+
+// Helper to extract cookie from main project https://myblocks.in
+function getCookie(name) {
+  try {
+    if (typeof Cookies !== 'undefined' && Cookies.get) {
+      const val = Cookies.get(name);
+      if (val) return val;
+    }
+    const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // Detect host environment and configure backend URL
 function getApiBase() {
@@ -207,7 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentSession = null;
 
   function checkAuthStatus() {
-    if (window.location.pathname.includes('/login')) {
+    if (window.location.pathname.includes('/login') && !window.location.search.includes('keepSession')) {
       localStorage.clear();
       sessionStorage.clear();
     }
@@ -217,6 +231,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginModal = document.getElementById('clientLoginModal');
     const activeClientText = document.getElementById('activeClientNameText');
 
+    // 1. Check for cookie 'userid' from main project https://myblocks.in
+    const mainCookieUserId = getCookie('userid') || getCookie('user_id') || getCookie('client_id');
+    if (mainCookieUserId) {
+      const parsedId = parseInt(mainCookieUserId, 10);
+      if (!isNaN(parsedId) && parsedId > 0) {
+        if (!currentSession || currentSession.client_id !== parsedId) {
+          currentSession = {
+            client_id: parsedId,
+            name: `MyBlocks Client (${parsedId})`,
+            role: (parsedId === 1001 ? 'admin' : 'client')
+          };
+          localStorage.setItem('orchestrator_session_data', JSON.stringify(currentSession));
+        }
+        if (loginModal) loginModal.style.display = 'none';
+        if (activeClientText) {
+          activeClientText.textContent = `${currentSession.name} (${currentSession.role === 'admin' ? '👑 Admin' : 'Client ' + currentSession.client_id})`;
+        }
+        if (globalClientSelector && globalClientSelector.value !== String(parsedId)) {
+          globalClientSelector.value = String(parsedId);
+        }
+        return true;
+      }
+    }
+
+    // 2. Local session fallback
     if (!token || !sessionStr) {
       if (loginModal) loginModal.style.display = 'flex';
       if (activeClientText) {
@@ -251,7 +290,8 @@ document.addEventListener('DOMContentLoaded', () => {
       headers['X-Session-Token'] = token;
     }
 
-    const clientVal = globalClientSelector ? globalClientSelector.value : (currentSession?.client_id || '1572');
+    const mainCookieUserId = getCookie('userid') || getCookie('user_id') || getCookie('client_id');
+    const clientVal = globalClientSelector ? globalClientSelector.value : (mainCookieUserId || currentSession?.client_id || '1572');
     if (clientVal === 'admin' || currentSession?.role === 'admin') {
       headers['X-Role'] = 'admin';
       headers['X-Admin'] = 'true';

@@ -153,8 +153,17 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/scrapper-agent', express.static(path.join(__dirname, 'public')));
 
 app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/scrapper-agent', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/scrapper-agent/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -352,6 +361,18 @@ function extractClientContext(req, res, next) {
   const queryClientId = req.query.client_id || req.query.user_id;
   const bodyClientId = req.body?.client_id || req.body?.user_id || req.body?.USERID;
 
+  // Extract 'userid' from incoming request cookies (set by main project https://myblocks.in)
+  let cookieUserId = null;
+  if (req.headers.cookie) {
+    const match = req.headers.cookie.match(/(?:^|;\s*)(?:userid|user_id|client_id)=([^;]+)/i);
+    if (match) {
+      const parsed = parseInt(decodeURIComponent(match[1]), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        cookieUserId = parsed;
+      }
+    }
+  }
+
   let targetClientId;
   let isAdmin = false;
 
@@ -359,7 +380,8 @@ function extractClientContext(req, res, next) {
     targetClientId = session.client_id;
     isAdmin = (session.role === 'admin');
   } else {
-    targetClientId = parseInt(headerClientId || queryClientId || bodyClientId || defaultScraperConfig.user_id, 10);
+    // Priority Cascade: Header (explicit client selector) > Cookie from main project > Query > Body > Default
+    targetClientId = parseInt(headerClientId, 10) || cookieUserId || parseInt(queryClientId || bodyClientId || defaultScraperConfig.user_id, 10);
     isAdmin = (req.headers['x-role'] === 'admin') || (req.headers['x-admin'] === 'true') || (req.query.admin === 'true');
   }
 
