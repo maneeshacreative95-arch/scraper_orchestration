@@ -17,6 +17,9 @@
           const matchUser = document.cookie.match(/(?:^|;\s*)(?:userid|user_id|client_id)=([^;]+)/i);
           const matchFirm = document.cookie.match(/(?:^|;\s*)(?:firmid|firm_id|FIRMID)=([^;]+)/i);
           if (!matchUser || !matchFirm) {
+            try {
+              sessionStorage.setItem('redirectAfterLogin', location.pathname + location.search);
+            } catch(e) {}
             window.location.replace('https://myblocks.in/login');
           }
         }
