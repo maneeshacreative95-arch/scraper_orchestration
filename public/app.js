@@ -1,5 +1,13 @@
 // Immediate Auth Check on script load
 (function initAuthCheck() {
+  if (window.location.pathname.includes('/login')) {
+    try {
+      sessionStorage.setItem('redirectAfterLogin', '/scrapper-agent/');
+    } catch(e) {}
+    window.location.replace('https://myblocks.in/login');
+    return;
+  }
+
   if (window.location.search.includes('logout')) {
     try {
       localStorage.removeItem('orchestrator_session_token');

@@ -156,7 +156,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/scrapper-agent', express.static(path.join(__dirname, 'public')));
 
 app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.redirect('https://myblocks.in/login');
 });
 
 app.get('/scrapper-agent', (req, res) => {
@@ -164,7 +164,7 @@ app.get('/scrapper-agent', (req, res) => {
 });
 
 app.get('/scrapper-agent/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.redirect('https://myblocks.in/login');
 });
 
 // Default Client Directory & Accounts
@@ -347,6 +347,12 @@ app.post('/api/auth/logout', (req, res) => {
   if (token && activeSessions[token]) {
     delete activeSessions[token];
   }
+  res.clearCookie('userid', { path: '/', domain: '.myblocks.in' });
+  res.clearCookie('firmid', { path: '/', domain: '.myblocks.in' });
+  res.clearCookie('adminuser', { path: '/', domain: '.myblocks.in' });
+  res.clearCookie('userid', { path: '/' });
+  res.clearCookie('firmid', { path: '/' });
+  res.clearCookie('adminuser', { path: '/' });
   return res.json({ success: true, message: 'Logged out successfully.' });
 });
 
