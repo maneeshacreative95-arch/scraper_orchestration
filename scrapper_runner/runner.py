@@ -55,6 +55,31 @@ def get_next_unprocessed_category(portal_id):
         cursor.close()
         conn.close()
 
+def stop_local_scraper(execution_id=None, username=None):
+    """
+    Stops local scraper processes using valid backend endpoints:
+    1. POST /execution/{execution_id}/stop (for batch execution)
+    2. POST /api/stop-scraper (for hotels/basic scraper with username)
+    """
+    if execution_id:
+        try:
+            r = requests.post(f"{BASE_URL}/execution/{execution_id}/stop", json={}, timeout=5)
+            if r.status_code == 200:
+                logger.info(f"Successfully stopped execution '{execution_id}' via /execution/{execution_id}/stop")
+        except Exception as e:
+            logger.warning(f"Notice stopping execution '{execution_id}': {e}")
+
+    # User-based stop scraper signal
+    users_to_try = [str(username)] if username else []
+    users_to_try.extend(["919", "1572", "Maneesha", "Anonymous"])
+    for u in set(users_to_try):
+        if not u:
+            continue
+        try:
+            requests.post(f"{BASE_URL}/api/stop-scraper", json={"username": u}, timeout=3)
+        except Exception:
+            pass
+
 def trigger_backend_scrape(emp_id, portal_id, category=None, city="", batch_id="auto_batch_1", total_contacts=1000, start_from=1, batch_size=1000):
     """
     Call the backend FastAPI /start-execution endpoint on local executable (127.0.0.1:7500).
@@ -103,10 +128,9 @@ def trigger_backend_scrape(emp_id, portal_id, category=None, city="", batch_id="
             logger.info(f"Local backend accepted execution. execution_id='{execution_id}'")
             return execution_id
         elif response.status_code == 400 and "already running" in response.text.lower():
-            logger.warning("Local backend returned 400 'Scraper is already running'. Attempting reset via /stop-execution & /api/stop-scraper...")
+            logger.warning("Local backend returned 400 'Scraper is already running'. Attempting reset via /api/stop-scraper...")
             try:
-                requests.post(f"{BASE_URL}/stop-execution", json={}, timeout=5)
-                requests.post(f"{BASE_URL}/api/stop-scraper", json={"username": str(emp_id)}, timeout=5)
+                stop_local_scraper(username=emp_id)
                 time.sleep(2)
             except Exception as reset_err:
                 logger.warning(f"Failed to send reset signals: {reset_err}")
@@ -456,7 +480,7 @@ async def process_task(websocket, emp_id=1572, job_data=None):
             except Exception:
                 pass
         try:
-            await asyncio.to_thread(requests.post, f"{BASE_URL}/stop-execution", json={}, timeout=5)
+            await asyncio.to_thread(stop_local_scraper, execution_id=None, username=emp_id)
         except Exception:
             pass
         await send_ws_event(websocket, "execution_stopped", {"status": "stopped"})
@@ -524,9 +548,10 @@ async def ws_runner_loop():
                                     logger.info("Active task cancelled successfully.")
                                 RUNNER_STATE["status"] = "idle"
                                 try:
-                                    await asyncio.to_thread(requests.post, f"{BASE_URL}/stop-execution", json={}, timeout=5)
+                                    target_exec_id = data.get("execution_id")
+                                    await asyncio.to_thread(stop_local_scraper, execution_id=target_exec_id, username=CLIENT_ID)
                                 except Exception as e:
-                                    logger.warning(f"Backend stop-execution notice: {e}")
+                                    logger.warning(f"Backend stop notice: {e}")
                                 await send_ws_event(websocket, "execution_stopped", {"status": "stopped"})
 
                         except json.JSONDecodeError:

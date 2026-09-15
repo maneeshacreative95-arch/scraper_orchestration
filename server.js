@@ -2849,9 +2849,10 @@ app.post('/api/exe/stop', async (req, res) => {
     try { await execPromise(`taskkill /F /IM chromedriver.exe /T`); } catch (e) {}
 
     try {
-      await fetch(`${SCRAPER_MANAGER_URL}/stop-execution`, {
+      await fetch(`${SCRAPER_MANAGER_URL}/api/stop-scraper`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Id': String(defaultScraperConfig.user_id), 'X-Firm-Id': '5' },
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: String(defaultScraperConfig.user_id) }),
         signal: AbortSignal.timeout(2000)
       });
     } catch (e) {}
@@ -2932,14 +2933,22 @@ app.post('/api/runners/stop', async (req, res) => {
 
   if (runner.execution_id) {
     try {
-      await fetch(`${SCRAPER_MANAGER_URL}/stop-execution`, {
+      await fetch(`${SCRAPER_MANAGER_URL}/execution/${runner.execution_id}/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-User-Id': String(defaultScraperConfig.user_id), 'X-Firm-Id': '5' },
-        body: JSON.stringify({ execution_id: runner.execution_id }),
+        body: JSON.stringify({}),
         signal: AbortSignal.timeout(2000)
       });
     } catch (e) {}
   }
+  try {
+    await fetch(`${SCRAPER_MANAGER_URL}/api/stop-scraper`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: runner.agent_name || String(defaultScraperConfig.user_id) }),
+      signal: AbortSignal.timeout(2000)
+    });
+  } catch (e) {}
 
   const runningCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && c.status === 'Running');
   if (runningCity) {
