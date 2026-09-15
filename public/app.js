@@ -249,11 +249,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Compulsory check: If on prod and either cookie is missing, shift full login to https://myblocks.in/login
     if (isProd && (!mainCookieUserId || !mainCookieFirmId)) {
-      if (loginModal) loginModal.style.display = 'flex';
+      if (loginModal) loginModal.style.display = 'none';
       if (activeClientText) {
-        activeClientText.innerHTML = '<span style="color: #f87171; font-weight: 600;">Authenticating with MyBlocks...</span>';
+        activeClientText.innerHTML = '<span style="color: #60a5fa; font-weight: 600;">Redirecting to MyBlocks...</span>';
       }
-      window.location.href = 'https://myblocks.in/login';
+      window.location.replace('https://myblocks.in/login');
       return false;
     }
 
