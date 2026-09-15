@@ -66,7 +66,7 @@ console.log(`[ORCHESTRATOR CLIENT] Active API Base URL: ${API_BASE || '(current 
 
 // Global Logout Handler — defined at top level for instant availability
 window.handleClientLogout = function() {
-  console.log('[CLIENT AUTH] Logging out session and redirecting to https://myblocks.in/login...');
+  console.log('[CLIENT AUTH] Logging out session and clearing all cookies & session storage...');
   try {
     const token = localStorage.getItem('orchestrator_session_token');
     if (token) {
@@ -80,19 +80,43 @@ window.handleClientLogout = function() {
     }
   } catch (e) {}
 
-  localStorage.clear();
-  sessionStorage.clear();
-
+  // 1. Clear LocalStorage and SessionStorage
   try {
-    document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;";
-    document.cookie = "firmid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;";
-    document.cookie = "adminuser=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;";
-    document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-    document.cookie = "firmid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-    document.cookie = "adminuser=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    localStorage.clear();
+    sessionStorage.clear();
   } catch (e) {}
 
-  window.location.href = 'https://myblocks.in/login';
+  // 2. Iterate and remove all cookies via js-cookie (if available)
+  try {
+    if (typeof Cookies !== 'undefined' && Cookies.get) {
+      const allCookies = Cookies.get();
+      for (const cookieName in allCookies) {
+        Cookies.remove(cookieName);
+        Cookies.remove(cookieName, { path: '/' });
+        Cookies.remove(cookieName, { path: '/', domain: '.myblocks.in' });
+        Cookies.remove(cookieName, { path: '/', domain: 'myblocks.in' });
+        Cookies.remove(cookieName, { path: '', domain: '.myblocks.in' });
+      }
+    }
+  } catch (e) {}
+
+  // 3. Fallback: Parse and clear all cookies via document.cookie
+  try {
+    const rawCookies = document.cookie.split(';');
+    for (let i = 0; i < rawCookies.length; i++) {
+      const c = rawCookies[i];
+      const eqPos = c.indexOf('=');
+      const name = eqPos > -1 ? c.substring(0, eqPos).trim() : c.trim();
+      if (name) {
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;`;
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=myblocks.in;`;
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=;`;
+      }
+    }
+  } catch (e) {}
+
+  window.location.replace('https://myblocks.in/login');
 };
 
 document.addEventListener('DOMContentLoaded', () => {
