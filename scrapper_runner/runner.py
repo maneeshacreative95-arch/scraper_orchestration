@@ -205,6 +205,56 @@ def update_scrapper_processing(emp_id, portal_id, portal_name, status):
         cursor.close()
         conn.close()
 
+async def wait_for_execution_completion(websocket, execution_id, emp_id, sp_id, portal_id, city_id, category):
+    """
+    Polls the local backend at BASE_URL/executions until the execution is completed, failed, or stopped.
+    Emits real-time progress events to the orchestrator WebSocket while scraping is active.
+    """
+    logger.info(f"Waiting for execution '{execution_id}' (Category: '{category}') to complete on local scraper backend...")
+    poll_url = f"{BASE_URL}/executions"
+    headers = {"X-User-Id": str(emp_id), "X-Firm-Id": "5"}
+
+    while True:
+        try:
+            res = await asyncio.to_thread(requests.get, poll_url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                exec_list = data.get("executions", [])
+                target_exec = next((x for x in exec_list if str(x.get("execution_id")) == str(execution_id)), None)
+
+                if target_exec:
+                    status = (target_exec.get("status") or "running").lower()
+                    progress = target_exec.get("progress", 0)
+                    scraped_count = target_exec.get("scraped_count", 0)
+
+                    # Emit progress update to orchestrator WebSocket
+                    await send_ws_event(websocket, "progress", {
+                        "sp_id": sp_id,
+                        "portal_id": portal_id,
+                        "city_id": city_id,
+                        "category": category,
+                        "execution_id": execution_id,
+                        "progress": progress,
+                        "scraped_count": scraped_count,
+                        "status": status
+                    })
+
+                    if status in ("completed", "partial", "stopped", "failed"):
+                        logger.info(f"Execution '{execution_id}' for '{category}' finished with status: {status.upper()}")
+                        return status
+                else:
+                    # If execution not found in active list, check if any running
+                    active_running = [x for x in exec_list if x.get("status") == "running"]
+                    if not active_running:
+                        logger.info(f"Execution '{execution_id}' finished on local backend.")
+                        return "completed"
+            await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Error checking execution status for '{execution_id}': {e}")
+            await asyncio.sleep(5)
+
 async def process_task(websocket, emp_id=1572, job_data=None):
     """Processes task categories and emits progress, execution_completed, and execution_failed WS events."""
     conn = await asyncio.to_thread(get_db_connection)
@@ -341,15 +391,10 @@ async def process_task(websocket, emp_id=1572, job_data=None):
                 await asyncio.sleep(5)
                 continue
 
-            # Emit progress update with execution_id
-            await send_ws_event(websocket, "progress", {
-                "sp_id": sp_id,
-                "portal_id": portal_id,
-                "city_id": city_id,
-                "category": category_to_scrape,
-                "execution_id": execution_id,
-                "status": "running"
-            })
+            # Wait for execution to finish on local backend before moving to next category
+            final_status = await wait_for_execution_completion(
+                websocket, execution_id, emp_id, sp_id, portal_id, city_id, category_to_scrape
+            )
 
             # Emit completion event for category
             await send_ws_event(websocket, "execution_completed", {
@@ -359,7 +404,7 @@ async def process_task(websocket, emp_id=1572, job_data=None):
                 "category": category_to_scrape,
                 "execution_id": execution_id,
                 "total_contacts": total_contacts,
-                "status": "completed"
+                "status": final_status
             })
             await asyncio.sleep(2)
 
