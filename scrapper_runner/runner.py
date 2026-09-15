@@ -31,7 +31,7 @@ def get_next_unprocessed_category(portal_id):
     for the given portal_id in KFVENDOR_SCRAPE_LOG. Returns None if all completed.
     """
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(dictionary=True, buffered=True)
     try:
         cursor.execute("""
             SELECT DISTINCT kc.SUB_CATEGORY 
@@ -66,19 +66,18 @@ def stop_local_scraper(execution_id=None, username=None):
             r = requests.post(f"{BASE_URL}/execution/{execution_id}/stop", json={}, timeout=5)
             if r.status_code == 200:
                 logger.info(f"Successfully stopped execution '{execution_id}' via /execution/{execution_id}/stop")
+                return
         except Exception as e:
             logger.warning(f"Notice stopping execution '{execution_id}': {e}")
 
-    # User-based stop scraper signal
-    users_to_try = [str(username)] if username else []
-    users_to_try.extend(["919", "1572", "Maneesha", "Anonymous"])
-    for u in set(users_to_try):
-        if not u:
-            continue
-        try:
-            requests.post(f"{BASE_URL}/api/stop-scraper", json={"username": u}, timeout=3)
-        except Exception:
-            pass
+    # Targeted user-based stop scraper call for active user
+    target_user = str(username or CLIENT_ID or "919")
+    try:
+        r = requests.post(f"{BASE_URL}/api/stop-scraper", json={"username": target_user}, timeout=3)
+        if r.status_code == 200:
+            logger.info(f"Successfully sent stop signal for user '{target_user}'.")
+    except Exception:
+        pass
 
 def trigger_backend_scrape(emp_id, portal_id, category=None, city="", batch_id="auto_batch_1", total_contacts=1000, start_from=1, batch_size=1000):
     """
@@ -191,7 +190,7 @@ def update_scrapper_processing(emp_id, portal_id, portal_name, status):
     if not emp_id or not portal_id:
         return None
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(buffered=True)
     try:
         cursor.execute("""
             SELECT SP_ID
@@ -321,7 +320,7 @@ async def wait_for_execution_completion(websocket, execution_id, emp_id, sp_id, 
 async def process_task(websocket, emp_id=1572, job_data=None):
     """Processes task categories and emits progress, execution_completed, and execution_failed WS events."""
     conn = await asyncio.to_thread(get_db_connection)
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(dictionary=True, buffered=True)
     sp_id = None
     portal_id = None
     portal_name = ""
