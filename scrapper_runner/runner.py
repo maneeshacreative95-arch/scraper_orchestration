@@ -549,6 +549,16 @@ async def ws_runner_loop():
 
                             if event_name in ("start_execution", "run_task"):
                                 logger.info("Received execution job command from Orchestrator.")
+                                RUNNER_STATE["status"] = "running"
+                                try:
+                                    await websocket.send(json.dumps({
+                                        "event": "heartbeat",
+                                        "type": "heartbeat",
+                                        "runner_id": RUNNER_ID,
+                                        "status": "running"
+                                    }))
+                                except Exception:
+                                    pass
                                 if active_task and not active_task.done():
                                     logger.warning("Cancelling previous running task before starting new execution.")
                                     active_task.cancel()

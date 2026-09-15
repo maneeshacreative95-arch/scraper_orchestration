@@ -2906,6 +2906,18 @@ app.post('/api/runners/start', async (req, res) => {
     return res.status(404).json({ error: 'Runner not found' });
   }
 
+  // Instantly mark runner as Running on server
+  runner.status = 'Running';
+  runner.last_heartbeat = new Date();
+  if (!runner.current_workflow) {
+    runner.current_workflow = 'Scraping Execution';
+  }
+  const wsRunner = wsConnectedRunners.get(runner.runner_id);
+  if (wsRunner) {
+    wsRunner.status = 'Running';
+    wsRunner.last_heartbeat = new Date();
+  }
+
   const targetCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && (c.status === 'Queued' || c.status === 'Pending'))
                   || cityQueue.find(c => c.status === 'Queued' || c.status === 'Pending');
 
