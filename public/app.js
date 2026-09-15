@@ -1,6 +1,6 @@
 // Immediate Auth Check on script load
 (function initAuthCheck() {
-  if ((window.location.pathname.includes('/login') || window.location.search.includes('logout')) && !window.location.search.includes('keepSession')) {
+  if (window.location.search.includes('logout')) {
     try {
       localStorage.removeItem('orchestrator_session_token');
       localStorage.removeItem('orchestrator_session_data');
@@ -221,11 +221,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentSession = null;
 
   function checkAuthStatus() {
-    if (window.location.pathname.includes('/login') && !window.location.search.includes('keepSession')) {
-      localStorage.clear();
-      sessionStorage.clear();
-    }
-
     const token = localStorage.getItem('orchestrator_session_token');
     const sessionStr = localStorage.getItem('orchestrator_session_data');
     const loginModal = document.getElementById('clientLoginModal');
@@ -381,15 +376,23 @@ document.addEventListener('DOMContentLoaded', () => {
           localStorage.setItem('orchestrator_session_token', data.token);
           localStorage.setItem('orchestrator_session_data', JSON.stringify(data));
 
+          const loginModal = document.getElementById('clientLoginModal');
+          if (loginModal) loginModal.style.display = 'none';
+
           if (successBox) {
-            successBox.textContent = 'Registration successful! Logging you in...';
+            successBox.textContent = 'Registration successful! Entering workspace...';
             successBox.style.display = 'block';
           }
 
           setTimeout(() => {
-            checkAuthStatus();
-            fetchStatus();
-          }, 800);
+            if (window.location.pathname.includes('/login')) {
+              const target = window.location.pathname.includes('/scrapper-agent') ? '/scrapper-agent/' : '/';
+              window.location.href = target;
+            } else {
+              checkAuthStatus();
+              fetchStatus();
+            }
+          }, 300);
         } else {
           if (alertBox) {
             alertBox.textContent = data.error || 'Registration failed. Please try again.';
@@ -449,12 +452,20 @@ document.addEventListener('DOMContentLoaded', () => {
           localStorage.setItem('orchestrator_session_token', data.token);
           localStorage.setItem('orchestrator_session_data', JSON.stringify(data));
 
+          const loginModal = document.getElementById('clientLoginModal');
+          if (loginModal) loginModal.style.display = 'none';
+
           if (globalClientSelector) {
             globalClientSelector.value = data.role === 'admin' ? 'admin' : String(data.client_id);
           }
 
-          checkAuthStatus();
-          fetchStatus();
+          if (window.location.pathname.includes('/login')) {
+            const target = window.location.pathname.includes('/scrapper-agent') ? '/scrapper-agent/' : '/';
+            window.location.href = target;
+          } else {
+            checkAuthStatus();
+            fetchStatus();
+          }
         } else {
           if (alertBox) {
             alertBox.textContent = data.error || 'Invalid credentials. Please try again.';
