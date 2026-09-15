@@ -7,6 +7,22 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Scraper Orchestrator Agent Dashboard</title>
+  <script>
+    // Instant pre-render auth check to prevent flash of login screen
+    (function() {
+      try {
+        const host = window.location.hostname.toLowerCase();
+        const isProd = host.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(host));
+        if (isProd) {
+          const matchUser = document.cookie.match(/(?:^|;\s*)(?:userid|user_id|client_id)=([^;]+)/i);
+          const matchFirm = document.cookie.match(/(?:^|;\s*)(?:firmid|firm_id|FIRMID)=([^;]+)/i);
+          if (!matchUser || !matchFirm) {
+            window.location.replace('https://myblocks.in/login');
+          }
+        }
+      } catch(e) {}
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -752,7 +768,7 @@
   </div>
 
   <!-- Client Authentication Login & Register Modal -->
-  <div id="clientLoginModal" style="position: fixed; inset: 0; z-index: 99999; background: rgba(15, 23, 42, 0.94); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: center; padding: 20px;">
+  <div id="clientLoginModal" style="position: fixed; inset: 0; z-index: 99999; background: rgba(15, 23, 42, 0.94); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; padding: 20px;">
     <div style="width: 100%; max-width: 440px; background: #0f172a; border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 16px; padding: 2.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);">
       <div style="text-align: center; margin-bottom: 2rem;">
         <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; background: rgba(59, 130, 246, 0.15); border-radius: 16px; margin-bottom: 1rem;">
@@ -760,6 +776,17 @@
         </div>
         <h2 id="authModalTitle" style="font-size: 1.6rem; font-weight: 700; color: #f8fafc; margin-bottom: 6px;">Client Authentication</h2>
         <p id="authModalSub" style="font-size: 0.88rem; color: #94a3b8;">Log in to access your Scraper Orchestrator workspace.</p>
+      </div>
+
+      <div style="margin-bottom: 1.5rem; text-align: center;">
+        <a href="https://myblocks.in/login" id="myblocksPortalLoginBtn" class="btn btn-primary" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; background: linear-gradient(135deg, #3b82f6, #1d4ed8); text-decoration: none; color: white;">
+          <span>🌐</span> Log In with MyBlocks Portal
+        </a>
+        <div style="display: flex; align-items: center; margin: 1.2rem 0; gap: 10px;">
+          <div style="flex: 1; height: 1px; background: rgba(255, 255, 255, 0.1);"></div>
+          <span style="font-size: 0.75rem; color: #64748b; text-transform: uppercase;">or local credentials</span>
+          <div style="flex: 1; height: 1px; background: rgba(255, 255, 255, 0.1);"></div>
+        </div>
       </div>
 
       <div id="loginErrorAlert" class="badge badge-failed" style="display: none; width: 100%; padding: 10px 14px; margin-bottom: 1.2rem; font-size: 0.85rem; border-radius: 8px; text-align: center; white-space: normal; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);"></div>

@@ -8,6 +8,17 @@
       sessionStorage.clear();
     } catch(e) {}
   }
+
+  // Check if running on production (myblocks.in or non-localhost)
+  const isProd = window.location.hostname.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(window.location.hostname));
+  if (isProd) {
+    const uid = getCookie('userid') || getCookie('user_id') || getCookie('client_id');
+    const fid = getCookie('firmid') || getCookie('firm_id') || getCookie('FIRMID');
+    if (!uid || !fid) {
+      console.warn('[AUTH] Missing compulsory userid or firmid cookie. Shifting full login to https://myblocks.in/login');
+      window.location.href = 'https://myblocks.in/login';
+    }
+  }
 })();
 
 // Helper to extract cookie from main project https://myblocks.in
@@ -52,7 +63,7 @@ console.log(`[ORCHESTRATOR CLIENT] Active API Base URL: ${API_BASE || '(current 
 
 // Global Logout Handler — defined at top level for instant availability
 window.handleClientLogout = function() {
-  console.log('[CLIENT AUTH] Logging out session...');
+  console.log('[CLIENT AUTH] Logging out session and redirecting to https://myblocks.in/login...');
   try {
     const token = localStorage.getItem('orchestrator_session_token');
     if (token) {
@@ -69,14 +80,16 @@ window.handleClientLogout = function() {
   localStorage.clear();
   sessionStorage.clear();
 
-  const loginModal = document.getElementById('clientLoginModal');
-  if (loginModal) loginModal.style.display = 'flex';
-  
-  if (window.location.pathname.includes('/scrapper-agent')) {
-    window.location.href = '/scrapper-agent/login';
-  } else {
-    window.location.href = '/login';
-  }
+  try {
+    document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;";
+    document.cookie = "firmid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;";
+    document.cookie = "adminuser=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.myblocks.in;";
+    document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    document.cookie = "firmid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    document.cookie = "adminuser=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+  } catch (e) {}
+
+  window.location.href = 'https://myblocks.in/login';
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -226,25 +239,51 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginModal = document.getElementById('clientLoginModal');
     const activeClientText = document.getElementById('activeClientNameText');
 
-    // 1. Check for cookie 'userid' from main project https://myblocks.in
+    // 1. Check for cookie 'userid', 'firmid', and 'adminuser' from main project https://myblocks.in
     const mainCookieUserId = getCookie('userid') || getCookie('user_id') || getCookie('client_id');
-    if (mainCookieUserId) {
+    const mainCookieFirmId = getCookie('firmid') || getCookie('firm_id') || getCookie('FIRMID');
+    const adminCookie = getCookie('adminuser') || getCookie('ADMIN_USER') || getCookie('admin_user');
+    const isCookieAdmin = Boolean(adminCookie && adminCookie !== '0' && adminCookie !== 'false' && adminCookie !== 'NO');
+
+    const isProd = window.location.hostname.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(window.location.hostname));
+
+    // Compulsory check: If on prod and either cookie is missing, shift full login to https://myblocks.in/login
+    if (isProd && (!mainCookieUserId || !mainCookieFirmId)) {
+      if (loginModal) loginModal.style.display = 'flex';
+      if (activeClientText) {
+        activeClientText.innerHTML = '<span style="color: #f87171; font-weight: 600;">Authenticating with MyBlocks...</span>';
+      }
+      window.location.href = 'https://myblocks.in/login';
+      return false;
+    }
+
+    if (mainCookieUserId && mainCookieFirmId) {
       const parsedId = parseInt(mainCookieUserId, 10);
+      const parsedFirmId = parseInt(mainCookieFirmId, 10);
+      const userRole = (isCookieAdmin || parsedId === 1001) ? 'admin' : 'client';
+      const displayName = isCookieAdmin ? `Admin User (${parsedId})` : `MyBlocks Client (${parsedId})`;
+
       if (!isNaN(parsedId) && parsedId > 0) {
-        if (!currentSession || currentSession.client_id !== parsedId) {
+        if (!currentSession || currentSession.client_id !== parsedId || currentSession.firm_id !== parsedFirmId || currentSession.role !== userRole) {
           currentSession = {
             client_id: parsedId,
-            name: `MyBlocks Client (${parsedId})`,
-            role: (parsedId === 1001 ? 'admin' : 'client')
+            firm_id: parsedFirmId,
+            name: displayName,
+            role: userRole,
+            admin_user: adminCookie || null
           };
           localStorage.setItem('orchestrator_session_data', JSON.stringify(currentSession));
         }
         if (loginModal) loginModal.style.display = 'none';
         if (activeClientText) {
-          activeClientText.textContent = `${currentSession.name} (${currentSession.role === 'admin' ? '👑 Admin' : 'Client ' + currentSession.client_id})`;
+          activeClientText.textContent = `${currentSession.name} (${userRole === 'admin' ? '👑 Admin' : 'Client ' + currentSession.client_id})`;
         }
-        if (globalClientSelector && globalClientSelector.value !== String(parsedId)) {
-          globalClientSelector.value = String(parsedId);
+        if (globalClientSelector) {
+          if (userRole === 'admin') {
+            globalClientSelector.style.display = 'inline-block';
+          } else {
+            globalClientSelector.value = String(parsedId);
+          }
         }
         return true;
       }
@@ -286,11 +325,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const mainCookieUserId = getCookie('userid') || getCookie('user_id') || getCookie('client_id');
-    const clientVal = globalClientSelector ? globalClientSelector.value : (mainCookieUserId || currentSession?.client_id || '1572');
-    if (clientVal === 'admin' || currentSession?.role === 'admin') {
+    const mainCookieFirmId = getCookie('firmid') || getCookie('firm_id') || getCookie('FIRMID') || currentSession?.firm_id || '5';
+    const adminCookie = getCookie('adminuser') || getCookie('ADMIN_USER') || getCookie('admin_user');
+    const isCookieAdmin = Boolean(adminCookie && adminCookie !== '0' && adminCookie !== 'false' && adminCookie !== 'NO');
+
+    headers['X-Firm-Id'] = String(mainCookieFirmId);
+
+    if (isCookieAdmin || currentSession?.role === 'admin' || globalClientSelector?.value === 'admin') {
       headers['X-Role'] = 'admin';
       headers['X-Admin'] = 'true';
+      if (adminCookie) headers['X-Admin-User'] = String(adminCookie);
+
+      if (globalClientSelector && globalClientSelector.value && globalClientSelector.value !== 'admin') {
+        headers['X-Client-Id'] = String(globalClientSelector.value);
+        headers['X-User-Id'] = String(globalClientSelector.value);
+      } else if (mainCookieUserId) {
+        headers['X-Client-Id'] = String(mainCookieUserId);
+        headers['X-User-Id'] = String(mainCookieUserId);
+      }
     } else {
+      const clientVal = globalClientSelector ? globalClientSelector.value : (mainCookieUserId || currentSession?.client_id || '1572');
       headers['X-Client-Id'] = String(clientVal);
       headers['X-User-Id'] = String(clientVal);
       headers['X-Auth-Client-Id'] = String(clientVal);

@@ -372,14 +372,27 @@ function extractClientContext(req, res, next) {
   const queryClientId = req.query.client_id || req.query.user_id;
   const bodyClientId = req.body?.client_id || req.body?.user_id || req.body?.USERID;
 
-  // Extract 'userid' from incoming request cookies (set by main project https://myblocks.in)
+  const headerFirmId = req.headers['x-firm-id'];
+  const queryFirmId = req.query.firm_id || req.query.firmid;
+  const bodyFirmId = req.body?.firm_id || req.body?.firmid || req.body?.FIRMID;
+
+  // Extract 'userid' and 'adminuser' from incoming request cookies
   let cookieUserId = null;
+  let isCookieAdmin = false;
   if (req.headers.cookie) {
     const match = req.headers.cookie.match(/(?:^|;\s*)(?:userid|user_id|client_id)=([^;]+)/i);
     if (match) {
       const parsed = parseInt(decodeURIComponent(match[1]), 10);
       if (!isNaN(parsed) && parsed > 0) {
         cookieUserId = parsed;
+      }
+    }
+
+    const adminMatch = req.headers.cookie.match(/(?:^|;\s*)(?:adminuser|ADMIN_USER|admin_user)=([^;]+)/i);
+    if (adminMatch && adminMatch[1]) {
+      const val = decodeURIComponent(adminMatch[1]).trim();
+      if (val && val !== '0' && val !== 'false' && val !== 'NO') {
+        isCookieAdmin = true;
       }
     }
   }
@@ -389,11 +402,11 @@ function extractClientContext(req, res, next) {
 
   if (session) {
     targetClientId = session.client_id;
-    isAdmin = (session.role === 'admin');
+    isAdmin = (session.role === 'admin') || isCookieAdmin;
   } else {
     // Priority Cascade: Header (explicit client selector) > Cookie from main project > Query > Body > Default
     targetClientId = parseInt(headerClientId, 10) || cookieUserId || parseInt(queryClientId || bodyClientId || defaultScraperConfig.user_id, 10);
-    isAdmin = (req.headers['x-role'] === 'admin') || (req.headers['x-admin'] === 'true') || (req.query.admin === 'true');
+    isAdmin = (req.headers['x-role'] === 'admin') || (req.headers['x-admin'] === 'true') || (req.query.admin === 'true') || isCookieAdmin || (req.headers['x-admin-user'] ? true : false);
   }
 
   // Allow Admin to view other client spaces if explicitly requested
@@ -403,6 +416,7 @@ function extractClientContext(req, res, next) {
   }
 
   req.clientId = targetClientId;
+  req.firmId = parseInt(headerFirmId || queryFirmId || bodyFirmId || defaultScraperConfig.firm_id || 5, 10);
   req.isAdmin = isAdmin;
 
   // Security Rule: Enforce HTTP 403 Forbidden if non-admin attempts unauthorized cross-client access
@@ -914,15 +928,16 @@ async function getValidGroqChatModel(key, preferredModel) {
   return 'llama-3.3-70b-versatile';
 }
 
-async function getActiveApiKey(targetUserId, provider = 'GROQ') {
+async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = null) {
   const userId = parseInt(targetUserId || defaultScraperConfig.user_id, 10);
+  const firmId = parseInt(targetFirmId || defaultScraperConfig.firm_id || 5, 10);
   try {
     const rows = await poolQuery(
-      `SELECT API_KEY, MODEL_NAME, MODEL_URL, LLM_PROVIDER, LLM_PROVIDER_TYPE, STATUS, BLOCKED 
+      `SELECT API_KEY, MODEL_NAME, MODEL_URL, LLM_PROVIDER, LLM_PROVIDER_TYPE, STATUS, BLOCKED, USERID, FIRMID 
        FROM API_KEY_MANAGER 
-       WHERE USERID = ? AND BLOCKED = 'NO'
-       ORDER BY ID DESC`,
-      [userId]
+       WHERE (USERID = ? OR (FIRMID = ? AND FIRMID IS NOT NULL)) AND BLOCKED = 'NO'
+       ORDER BY (USERID = ?) DESC, (STATUS = 'ACTIVE') DESC, ID DESC`,
+      [userId, firmId, userId]
     ).catch(() => []);
 
     if (rows && rows.length > 0) {
@@ -950,7 +965,7 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ') {
       }
     }
   } catch (err) {
-    console.error('[APIKEY] Error loading active key for user:', userId, err.message);
+    console.error('[APIKEY] Error loading active key for user:', userId, 'firm:', firmId, err.message);
   }
 
   if (process.env.GROQ_API_KEY) {
@@ -976,8 +991,8 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ') {
 }
 
 // LLM Region Discovery & Business Estimation Engine (Step 1)
-async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, targetUserId) {
-  const activeKeyObj = await getActiveApiKey(targetUserId, 'GROQ');
+async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, targetUserId, targetFirmId = null) {
+  const activeKeyObj = await getActiveApiKey(targetUserId, 'GROQ', targetFirmId);
 
   if (!activeKeyObj.exists || !activeKeyObj.key) {
     const noKeyMsg = 'No API configured. Please add one in MyBlocks API Key Manager.';
@@ -1778,7 +1793,7 @@ app.get('/api/status', async (req, res) => {
 
     const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
 
-    const activeLlmConfig = await getActiveApiKey(client_id, 'GROQ');
+    const activeLlmConfig = await getActiveApiKey(client_id, 'GROQ', req.firmId);
 
     res.json({
       backendOnline,
@@ -2071,7 +2086,8 @@ app.post('/api/scheduler/config', (req, res) => {
 // Endpoint to return logged-in user's MyBlocks LLM connection status (Server-side safe: API key is never exposed!)
 app.get('/api/user-llm-config', async (req, res) => {
   const targetUserId = req.clientId || req.query.user_id || defaultScraperConfig.user_id;
-  const config = await getActiveApiKey(targetUserId, 'GROQ');
+  const targetFirmId = req.firmId || req.query.firm_id || defaultScraperConfig.firm_id;
+  const config = await getActiveApiKey(targetUserId, 'GROQ', targetFirmId);
 
   res.json({
     user_id: targetUserId,
@@ -2695,7 +2711,7 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
     logReallocation(`[LLM DISCOVERY] Initiating Region Discovery for prompt '${promptText}' (Topic: '${currentOrchestrationTopic}', Coverage: '${coverageScope}', User: '${req.clientId}')...`);
     
     // Step 1: LLM Region Discovery using logged-in User's MyBlocks API Key Config
-    const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit, req.clientId);
+    const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit, req.clientId, req.firmId);
     latestDiscoveryResults = discovered;
 
     logReallocation(`[LLM DISCOVERY] LLM identified ${discovered.length} locations across requested coverage scope.`);
