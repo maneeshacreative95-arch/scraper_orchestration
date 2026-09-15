@@ -1179,29 +1179,70 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  let cachedRunnersList = [];
+  const runnerActionStates = {};
+
   function renderRunnersTable(runners) {
     if (!runnerRegistryTableBody) return;
+    if (runners) cachedRunnersList = runners;
+    const currentRunners = cachedRunnersList || [];
+
     runnerRegistryTableBody.innerHTML = '';
-    if (!runners || runners.length === 0) {
+    if (currentRunners.length === 0) {
       runnerRegistryTableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--color-text-muted);">No runners registered.</td></tr>`;
       return;
     }
 
-    runners.forEach(r => {
-      const statusClass = r.status === 'Running' || r.status === 'Busy' ? 'badge-running' : (r.status === 'Offline' || r.status === 'Crashed' ? 'badge-failed' : 'badge-completed');
+    currentRunners.forEach(r => {
+      const actionState = runnerActionStates[r.runner_id];
+      let displayStatus = r.status || 'Idle';
+
+      if (actionState === 'starting') {
+        if (r.status === 'Running' || r.status === 'Busy') {
+          delete runnerActionStates[r.runner_id];
+          displayStatus = r.status;
+        } else {
+          displayStatus = 'Starting...';
+        }
+      } else if (actionState === 'stopping') {
+        if (r.status === 'Idle') {
+          delete runnerActionStates[r.runner_id];
+          displayStatus = 'Idle';
+        } else {
+          displayStatus = 'Stopping...';
+        }
+      }
+
+      const isRunning = displayStatus === 'Running' || displayStatus === 'Busy';
+      const isStarting = displayStatus === 'Starting...';
+      const isStopping = displayStatus === 'Stopping...';
+
+      let statusClass = 'badge-completed';
+      if (isRunning || isStarting) statusClass = 'badge-running';
+      else if (isStopping) statusClass = 'badge-running';
+      else if (displayStatus === 'Offline' || displayStatus === 'Crashed') statusClass = 'badge-failed';
+
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><strong>${r.server_name}</strong></td>
+        <td><strong>${r.server_name || r.runner_name || '-'}</strong></td>
         <td><code>${r.runner_id}</code></td>
-        <td><code>${r.host_ip}</code></td>
-        <td>${r.agent_name}</td>
-        <td><span class="badge ${statusClass}">${r.status}</span></td>
+        <td><code>${r.host_ip || r.server_ip || '-'}</code></td>
+        <td>${r.agent_name || '-'}</td>
+        <td><span class="badge ${statusClass}">${displayStatus}</span></td>
         <td style="font-size: 0.75rem;">${r.last_heartbeat ? new Date(r.last_heartbeat).toLocaleTimeString() : '-'}</td>
-        <td style="color: var(--accent-color); font-weight: 500;">${r.current_workflow || '-'}</td>
+        <td style="color: var(--accent-color); font-weight: 500;">${r.current_workflow || (isStarting ? 'Initiating workflow...' : '-')}</td>
         <td>${r.current_batch || '-'}</td>
         <td>
           <div style="display: flex; gap: 5px; flex-wrap: nowrap;">
-            ${r.status === 'Running' ? `
+            ${isStarting ? `
+              <button class="btn btn-secondary btn-sm" disabled style="opacity: 0.75; cursor: wait; color: #4ade80; border-color: rgba(74,222,128,0.4); font-weight: 600;">
+                <span class="spinner-inline"></span>Starting...
+              </button>
+            ` : isStopping ? `
+              <button class="btn btn-secondary btn-sm" disabled style="opacity: 0.75; cursor: wait; color: #f87171; border-color: rgba(239,68,68,0.4); font-weight: 600;">
+                <span class="spinner-inline"></span>Stopping...
+              </button>
+            ` : isRunning ? `
               <button class="btn btn-secondary btn-sm" style="color: #f87171; border-color: rgba(239,68,68,0.4); font-weight: 600;" onclick="stopRunnerExecution('${r.runner_id}')">⏹ Stop</button>
             ` : `
               <button class="btn btn-secondary btn-sm" style="color: #4ade80; border-color: rgba(74,222,128,0.4); font-weight: 600;" onclick="startRunnerExecution('${r.runner_id}')">▶ Start</button>
@@ -1216,55 +1257,93 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   window.startScraperExe = async () => {
+    const startBtn = document.getElementById('startExeBtn');
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.innerHTML = `<span class="spinner-inline"></span>Starting...`;
+    }
     try {
-      const res = await fetch(`${API_BASE}/api/exe/start`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/exe/start`, { method: 'POST', headers: getClientHeaders() });
       const data = await res.json();
-      alert(data.message || 'Scraper Executable starting...');
-      setTimeout(fetchStatus, 1000);
+      if (backendStatusBadge) {
+        backendStatusBadge.textContent = 'Starting...';
+        backendStatusBadge.className = 'badge badge-running';
+      }
+      setTimeout(fetchStatus, 1200);
     } catch (err) {
       alert('Error starting executable: ' + err.message);
+    } finally {
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.innerHTML = `▶ Start Exe`;
+      }
     }
   };
 
   window.stopScraperExe = async () => {
     if (confirm('Stop Scraper Executable and cancel all running tasks?')) {
+      const stopBtn = document.getElementById('stopExeBtn');
+      if (stopBtn) {
+        stopBtn.disabled = true;
+        stopBtn.innerHTML = `<span class="spinner-inline"></span>Stopping...`;
+      }
       try {
-        const res = await fetch(`${API_BASE}/api/exe/stop`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/api/exe/stop`, { method: 'POST', headers: getClientHeaders() });
         const data = await res.json();
-        alert(data.message || 'Scraper Executable stopped.');
+        if (backendStatusBadge) {
+          backendStatusBadge.textContent = 'Stopping...';
+          backendStatusBadge.className = 'badge badge-running';
+        }
         setTimeout(fetchStatus, 1000);
       } catch (err) {
         alert('Error stopping executable: ' + err.message);
+      } finally {
+        if (stopBtn) {
+          stopBtn.disabled = false;
+          stopBtn.innerHTML = `⏹ Stop Exe`;
+        }
       }
     }
   };
 
   window.startRunnerExecution = async (runnerId) => {
+    // Instant snap update: mark runner as starting and immediately re-render table
+    runnerActionStates[runnerId] = 'starting';
+    renderRunnersTable();
+
     try {
       const res = await fetch(`${API_BASE}/api/runners/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getClientHeaders() },
         body: JSON.stringify({ runner_id: runnerId })
       });
       const data = await res.json();
-      fetchStatus();
+      await fetchStatus();
     } catch (err) {
-      console.error(err);
+      console.error('Failed to start runner execution:', err);
+      delete runnerActionStates[runnerId];
+      renderRunnersTable();
     }
   };
 
   window.stopRunnerExecution = async (runnerId) => {
     if (confirm(`Stop execution for runner ${runnerId}?`)) {
+      // Instant snap update: mark runner as stopping and immediately re-render table
+      runnerActionStates[runnerId] = 'stopping';
+      renderRunnersTable();
+
       try {
         const res = await fetch(`${API_BASE}/api/runners/stop`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getClientHeaders() },
           body: JSON.stringify({ runner_id: runnerId })
         });
         const data = await res.json();
-        fetchStatus();
+        await fetchStatus();
       } catch (err) {
-        console.error(err);
+        console.error('Failed to stop runner execution:', err);
+        delete runnerActionStates[runnerId];
+        renderRunnersTable();
       }
     }
   };
