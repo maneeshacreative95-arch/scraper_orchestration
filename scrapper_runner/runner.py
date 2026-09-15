@@ -37,8 +37,8 @@ def get_next_unprocessed_category(portal_id):
             SELECT DISTINCT kc.SUB_CATEGORY 
             FROM KF_CATEGORY kc
             LEFT JOIN KFVENDOR_SCRAPE_LOG sl 
-                ON sl.PORTAL_ID = %s 
-               AND sl.CATEGORY = kc.SUB_CATEGORY 
+                ON (sl.PORTAL_ID = %s OR sl.PORTAL_ID IS NULL OR sl.PORTAL_ID = 0)
+               AND TRIM(LOWER(sl.CATEGORY)) = TRIM(LOWER(kc.SUB_CATEGORY))
                AND sl.COPIED_TO_DEST = 1
             WHERE kc.STATUS = 'ACTIVE' 
               AND kc.SUB_CATEGORY IS NOT NULL 
@@ -205,55 +205,94 @@ def update_scrapper_processing(emp_id, portal_id, portal_name, status):
         cursor.close()
         conn.close()
 
-async def wait_for_execution_completion(websocket, execution_id, emp_id, sp_id, portal_id, city_id, category):
+async def wait_for_execution_completion(websocket, execution_id, emp_id, sp_id, portal_id, city_id, category, poll_interval=10):
     """
-    Polls the local backend at BASE_URL/executions until the execution is completed, failed, or stopped.
+    Polls the local backend API GET /execution/{execution_id}/status (or /executions)
+    until the execution reaches a terminal state: 'completed', 'failed', or 'stopped'.
     Emits real-time progress events to the orchestrator WebSocket while scraping is active.
     """
     logger.info(f"Waiting for execution '{execution_id}' (Category: '{category}') to complete on local scraper backend...")
-    poll_url = f"{BASE_URL}/executions"
+    status_url = f"{BASE_URL}/execution/{execution_id}/status"
+    executions_url = f"{BASE_URL}/executions"
     headers = {"X-User-Id": str(emp_id), "X-Firm-Id": "5"}
+    terminal_states = {"completed", "failed", "stopped", "partial"}
+    wait_count = 0
 
     while True:
         try:
-            res = await asyncio.to_thread(requests.get, poll_url, headers=headers, timeout=10)
+            # 1. Try specific execution status endpoint first with 30s timeout
+            res = await asyncio.to_thread(requests.get, status_url, headers=headers, timeout=30)
+            
             if res.status_code == 200:
                 data = res.json()
-                exec_list = data.get("executions", [])
-                target_exec = next((x for x in exec_list if str(x.get("execution_id")) == str(execution_id)), None)
+                status = (data.get("status") or "running").lower()
+                progress = data.get("progress", 0)
+                scraped_count = data.get("scraped_count", 0)
 
-                if target_exec:
-                    status = (target_exec.get("status") or "running").lower()
-                    progress = target_exec.get("progress", 0)
-                    scraped_count = target_exec.get("scraped_count", 0)
+                # Emit progress update to orchestrator WebSocket
+                await send_ws_event(websocket, "progress", {
+                    "sp_id": sp_id,
+                    "portal_id": portal_id,
+                    "city_id": city_id,
+                    "category": category,
+                    "execution_id": execution_id,
+                    "progress": progress,
+                    "scraped_count": scraped_count,
+                    "status": status
+                })
 
-                    # Emit progress update to orchestrator WebSocket
-                    await send_ws_event(websocket, "progress", {
-                        "sp_id": sp_id,
-                        "portal_id": portal_id,
-                        "city_id": city_id,
-                        "category": category,
-                        "execution_id": execution_id,
-                        "progress": progress,
-                        "scraped_count": scraped_count,
-                        "status": status
-                    })
+                if status in terminal_states:
+                    logger.info(f"[API] Execution '{execution_id}' for category '{category}' ended with status: '{status.upper()}'.")
+                    return status
 
-                    if status in ("completed", "partial", "stopped", "failed"):
-                        logger.info(f"Execution '{execution_id}' for '{category}' finished with status: {status.upper()}")
-                        return status
-                else:
-                    # If execution not found in active list, check if any running
-                    active_running = [x for x in exec_list if x.get("status") == "running"]
-                    if not active_running:
-                        logger.info(f"Execution '{execution_id}' finished on local backend.")
-                        return "completed"
-            await asyncio.sleep(4)
+            elif res.status_code in (404, 405):
+                # Fallback to /executions list if /status endpoint is not available
+                list_res = await asyncio.to_thread(requests.get, executions_url, headers=headers, timeout=30)
+                if list_res.status_code == 200:
+                    exec_list = list_res.json().get("executions", [])
+                    target_exec = next((x for x in exec_list if str(x.get("execution_id")) == str(execution_id)), None)
+
+                    if target_exec:
+                        status = (target_exec.get("status") or "running").lower()
+                        progress = target_exec.get("progress", 0)
+                        scraped_count = target_exec.get("scraped_count", 0)
+
+                        await send_ws_event(websocket, "progress", {
+                            "sp_id": sp_id,
+                            "portal_id": portal_id,
+                            "city_id": city_id,
+                            "category": category,
+                            "execution_id": execution_id,
+                            "progress": progress,
+                            "scraped_count": scraped_count,
+                            "status": status
+                        })
+
+                        if status in terminal_states:
+                            logger.info(f"[API] Execution '{execution_id}' for '{category}' finished with status: '{status.upper()}'.")
+                            return status
+                    else:
+                        active_running = [x for x in exec_list if x.get("status") == "running"]
+                        if not active_running:
+                            logger.info(f"[API] Execution '{execution_id}' is no longer active in local backend.")
+                            return "completed"
+
+            wait_count += 1
+            if wait_count % (60 // poll_interval) == 0:
+                elapsed = wait_count * poll_interval
+                logger.info(f"[API] Scraper actively working on '{category}' ({elapsed}s elapsed)...")
+
+            await asyncio.sleep(poll_interval)
+
         except asyncio.CancelledError:
             raise
+        except requests.exceptions.Timeout:
+            # Scraper is busy executing scraping in Chrome/ChromeDriver - normal behavior
+            logger.info(f"[API] Local scraper backend busy scraping '{category}'... (polling continues)")
+            await asyncio.sleep(poll_interval)
         except Exception as e:
-            logger.warning(f"Error checking execution status for '{execution_id}': {e}")
-            await asyncio.sleep(5)
+            logger.warning(f"[API] Notice while polling execution '{execution_id}': {e}. Retrying in {poll_interval}s...")
+            await asyncio.sleep(poll_interval)
 
 async def process_task(websocket, emp_id=1572, job_data=None):
     """Processes task categories and emits progress, execution_completed, and execution_failed WS events."""
