@@ -81,8 +81,6 @@
           <div class="sim-toggle-wrapper" style="display: flex; align-items: center; gap: 8px;">
             <span class="sim-label">Runner Network:</span>
             <span id="backendStatusBadge" class="badge badge-running">Checking...</span>
-            <button id="startExeBtn" type="button" class="btn btn-secondary btn-sm" style="color: #4ade80; border-color: rgba(74, 222, 128, 0.4); font-weight: 600; cursor: pointer; padding: 4px 10px; font-size: 0.78rem;" onclick="startScraperExe()">▶ Start Exe</button>
-            <button id="stopExeBtn" type="button" class="btn btn-secondary btn-sm" style="color: #f87171; border-color: rgba(239, 68, 68, 0.4); font-weight: 600; cursor: pointer; padding: 4px 10px; font-size: 0.78rem;" onclick="stopScraperExe()">⏹ Stop Exe</button>
           </div>
           <button id="logoutBtn" type="button" class="btn btn-secondary" style="color: #f87171; border-color: rgba(239,68,68,0.3); font-weight: 600; cursor: pointer;" onclick="handleClientLogout()">🚪 Logout</button>
         </div>
@@ -201,17 +199,6 @@
           <div class="panel-card" style="margin-bottom: 1.5rem;">
             <div class="panel-header">
               <h2>Distributed Runner Registry (Step 5)</h2>
-              <button id="addRunnerTriggerBtn" class="btn btn-primary btn-sm">+ Register Runner</button>
-            </div>
-
-            <div id="addRunnerForm" class="add-city-form hidden" style="background: var(--bg-card); border: 1px solid var(--border-card); padding: 1.2rem; border-radius: 10px; margin-bottom: 1rem;">
-              <input type="text" id="runnerServerNameInput" placeholder="Server Name (e.g. GPU Server)" required>
-              <input type="text" id="runnerHostIpInput" placeholder="Host/IP (e.g. 192.168.1.102:7500)" required>
-              <input type="text" id="runnerAgentNameInput" placeholder="Agent Name (e.g. Agent-6)" required>
-              <div class="form-buttons" style="margin-top: 10px;">
-                <button id="submitRunnerBtn" class="btn btn-primary btn-sm">Save Runner</button>
-                <button id="cancelRunnerBtn" class="btn btn-secondary btn-sm">Cancel</button>
-              </div>
             </div>
 
             <p style="font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 1rem;">
