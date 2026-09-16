@@ -524,30 +524,8 @@ async function dispatchNextQueuedBatch(runnerId) {
   }
 }
 
-// Distributed Registered Runner Registry (Step 5) - Tagged with Client IDs
-const registeredRunnersList = [
-  { runner_id: 'r_1', server_name: 'Server-1 (Local Host PC)', host_ip: '127.0.0.1:7500', agent_name: 'Manisha (Local PC)', client_id: 1572, status: 'Idle' },
-  { runner_id: 'r_2', server_name: 'Server-2', host_ip: '192.168.1.101:7500', agent_name: 'Pavan G', client_id: 1572, status: 'Idle' },
-  { runner_id: 'r_3', server_name: 'Server-3', host_ip: '192.168.1.102:7500', agent_name: 'Rahsuf', client_id: 1572, status: 'Idle' },
-  { runner_id: 'r_4', server_name: 'Server-4', host_ip: '192.168.1.103:7500', agent_name: 'Sathwik', client_id: 1572, status: 'Idle' },
-  { runner_id: 'r_5', server_name: 'Server-5', host_ip: '192.168.1.104:7500', agent_name: 'Gokul (Client B)', client_id: 2001, status: 'Idle' },
-  { runner_id: 'r_6', server_name: 'Server-6', host_ip: '192.168.1.105:7500', agent_name: 'Abhirami Aji (Client B)', client_id: 2001, status: 'Idle' },
-  { runner_id: 'r_7', server_name: 'Server-7', host_ip: '192.168.1.106:7500', agent_name: 'Vismaya E (Client B)', client_id: 2001, status: 'Idle' },
-  { runner_id: 'r_8', server_name: 'Server-8', host_ip: '192.168.1.107:7500', agent_name: 'Shrinidhi (Client B)', client_id: 2001, status: 'Idle' },
-  { runner_id: 'r_9', server_name: 'Server-9', host_ip: '192.168.1.108:7500', agent_name: 'Tushar Mehra (Client C)', client_id: 3002, status: 'Idle' },
-  { runner_id: 'r_10', server_name: 'Server-10', host_ip: '192.168.1.109:7500', agent_name: 'Aayush (Client C)', client_id: 3002, status: 'Idle' },
-  { runner_id: 'r_11', server_name: 'Server-11', host_ip: '192.168.1.110:7500', agent_name: 'Anonymous (Client C)', client_id: 3002, status: 'Idle' },
-  { runner_id: 'r_12', server_name: 'Server-12', host_ip: '192.168.1.111:7500', agent_name: 'Malavika (Client C)', client_id: 3002, status: 'Idle' }
-];
-
-let runnerRegistry = registeredRunnersList.map(r => ({
-  ...r,
-  last_heartbeat: new Date(),
-  current_workflow: null,
-  current_batch: null,
-  execution_id: null,
-  portal_id: null
-}));
+// Distributed Registered Runner Registry (Step 5) - Real active runners populated via WebSocket or manual registration
+let runnerRegistry = [];
 
 let latestDiscoveryResults = [];
 let latestValidationResults = [];
