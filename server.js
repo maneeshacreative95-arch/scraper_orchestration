@@ -609,24 +609,36 @@ function handleWsConnection(ws, req) {
         });
 
         const parsedClientId = parseInt(data.client_id, 10) || 1572;
+        const hostIp = `${data.server_ip || clientIp}:${data.port || 7500}`;
+        const runnerDisplayName = data.runner_name || `Client ${parsedClientId} (${clientIp})`;
 
-        let regItem = runnerRegistry.find(r => 
-          r.runner_id === runnerId || 
-          (r.agent_name === data.runner_name && parseInt(r.client_id, 10) === parsedClientId)
-        );
+        wsConnectedRunners.set(runnerId, {
+          ws: ws,
+          runner_id: runnerId,
+          runner_name: runnerDisplayName,
+          client_id: parsedClientId,
+          server_ip: data.server_ip || clientIp,
+          port: data.port || 7500,
+          connected_at: new Date(),
+          last_heartbeat: new Date(),
+          status: 'Idle'
+        });
+
+        let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
         if (regItem) {
           regItem.runner_id = runnerId;
           regItem.client_id = parsedClientId;
-          regItem.agent_name = data.runner_name || regItem.agent_name;
+          regItem.agent_name = runnerDisplayName;
+          regItem.server_name = runnerDisplayName;
           regItem.status = 'Idle';
           regItem.last_heartbeat = new Date();
-          regItem.host_ip = `${data.server_ip || '127.0.0.1'}:${data.port || 7500}`;
+          regItem.host_ip = hostIp;
         } else {
           runnerRegistry.push({
             runner_id: runnerId,
-            server_name: data.runner_name || `Server (${data.server_ip || '127.0.0.1'})`,
-            host_ip: `${data.server_ip || '127.0.0.1'}:${data.port || 7500}`,
-            agent_name: data.runner_name || runnerId,
+            server_name: runnerDisplayName,
+            host_ip: hostIp,
+            agent_name: runnerDisplayName,
             client_id: parsedClientId,
             status: 'Idle',
             last_heartbeat: new Date(),
@@ -637,11 +649,30 @@ function handleWsConnection(ws, req) {
           });
         }
 
-        console.log(`[WEBSOCKET REGISTER] Runner '${runnerId}' (${data.runner_name}) registered successfully.`);
+        // Auto-sync to agents array
+        let agentItem = agents.find(a => a.agent_id === runnerId || a.agent_name === runnerDisplayName);
+        if (agentItem) {
+          agentItem.status = 'Idle';
+          agentItem.client_id = parsedClientId;
+          agentItem.last_heartbeat = new Date();
+        } else {
+          agents.push({
+            agent_id: runnerId,
+            portal_id: null,
+            agent_name: runnerDisplayName,
+            client_id: parsedClientId,
+            status: 'Idle',
+            current_city: null,
+            execution_id: null,
+            last_heartbeat: new Date()
+          });
+        }
+
+        console.log(`[WEBSOCKET REGISTER] Runner '${runnerId}' (${runnerDisplayName}) registered successfully.`);
         logReallocationEvent({
           event_type: 'WS Register',
           from_agent: '-',
-          to_agent: data.runner_name || runnerId,
+          to_agent: runnerDisplayName,
           portal_id: '-',
           city_batch: '-',
           reason: `WebSocket runner connected from ${clientIp}`
@@ -661,8 +692,23 @@ function handleWsConnection(ws, req) {
           clientObj.last_heartbeat = new Date();
           if (data.status) clientObj.status = (data.status === 'running' ? 'Running' : 'Idle');
 
-          const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
-          if (regItem) {
+          let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+          if (!regItem) {
+            regItem = {
+              runner_id: runnerId,
+              server_name: clientObj.runner_name || `Server (${clientObj.server_ip})`,
+              host_ip: `${clientObj.server_ip}:${clientObj.port}`,
+              agent_name: clientObj.runner_name || runnerId,
+              client_id: clientObj.client_id,
+              status: clientObj.status,
+              last_heartbeat: new Date(),
+              current_workflow: null,
+              current_batch: null,
+              execution_id: null,
+              portal_id: null
+            };
+            runnerRegistry.push(regItem);
+          } else {
             regItem.last_heartbeat = new Date();
             if (data.status) regItem.status = (data.status === 'running' ? 'Running' : 'Idle');
           }
@@ -808,6 +854,16 @@ function getConnectedWsRunner(runnerOrAgent) {
         if (heartbeatAgeSec <= 35 && info.client_id === targetClientId && (info.status === 'Idle' || info.status === 'idle')) {
           return info;
         }
+      }
+    }
+  }
+
+  // 3. Fallback: Any active connected and idle WebSocket runner
+  for (const [id, info] of wsConnectedRunners.entries()) {
+    if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
+      const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
+      if (heartbeatAgeSec <= 35 && (info.status === 'Idle' || info.status === 'idle')) {
+        return info;
       }
     }
   }
@@ -1787,18 +1843,42 @@ app.get('/api/status', async (req, res) => {
     const client_id = req.clientId || defaultScraperConfig.user_id;
     const isAdmin = req.isAdmin;
 
+    // Sync all active WebSocket connections into runnerRegistry dynamically
+    for (const [id, info] of wsConnectedRunners.entries()) {
+      let regItem = runnerRegistry.find(r => r.runner_id === id);
+      if (!regItem) {
+        runnerRegistry.push({
+          runner_id: id,
+          server_name: info.runner_name || `Server (${info.server_ip})`,
+          host_ip: `${info.server_ip}:${info.port}`,
+          agent_name: info.runner_name || id,
+          client_id: info.client_id,
+          status: info.status || 'Idle',
+          last_heartbeat: info.last_heartbeat || new Date(),
+          current_workflow: null,
+          current_batch: null,
+          execution_id: null,
+          portal_id: null
+        });
+      } else {
+        if (info.status) regItem.status = (info.status === 'running' ? 'Running' : 'Idle');
+        if (info.last_heartbeat) regItem.last_heartbeat = info.last_heartbeat;
+        if (info.client_id) regItem.client_id = info.client_id;
+      }
+    }
+
     const filteredQueue = cityQueue.filter(c => isAdmin || (c.client_id || 1572) === client_id);
-    const filteredAgents = agents.filter(a => isAdmin || (a.client_id || 1572) === client_id);
-    const filteredRunners = runnerRegistry.filter(r => isAdmin || (r.client_id || 1572) === client_id);
-    const filteredAllocations = allocations.filter(a => isAdmin || (a.client_id || 1572) === client_id);
+    const filteredAgents = agents;
+    const filteredRunners = runnerRegistry; // Independent of client_id: show all connected & registered runners!
+    const filteredAllocations = allocations;
     const filteredSchedulerBatches = schedulerBatches.filter(b => isAdmin || (b.client_id || 1572) === client_id);
-    const filteredReallocations = reallocationEvents.filter(e => isAdmin || (e.client_id || 1572) === client_id);
-    const filteredErrors = errorHistory.filter(e => isAdmin || (e.client_id || 1572) === client_id);
-    const filteredPerformance = performanceMatrix.filter(p => isAdmin || (p.client_id || 1572) === client_id);
+    const filteredReallocations = reallocationEvents;
+    const filteredErrors = errorHistory;
+    const filteredPerformance = performanceMatrix;
 
     const activeRunners = filteredRunners.filter(r => r.status === 'Running' || r.status === 'Busy').length;
     const idleRunners = filteredRunners.filter(r => r.status === 'Idle').length;
-    const failedRunners = filteredRunners.filter(r => r.status === 'Offline' || r.status === 'Crashed').length;
+    const failedRunners = filteredRunners.filter(r => r.status === 'Offline' || r.status === 'Crashed' || r.status === 'Disconnected').length;
 
     const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
 
@@ -3533,7 +3613,12 @@ async function allocationEngine() {
       city = cityQueue.find(c => c.status === 'Pending' && (c.client_id || 1572) === rClientId);
     }
 
-    if (!city) continue; // No pending batches for THIS client_id
+    // 4. Global Fallback: Any next pending batch across all clients so no runner sits idle
+    if (!city) {
+      city = cityQueue.find(c => c.status === 'Pending');
+    }
+
+    if (!city) continue; // No pending batches available anywhere
 
     // Mark state as active
     if (city.state) {
