@@ -1309,6 +1309,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.startRunnerExecution = async (runnerId) => {
     // Instant snap update: mark runner as starting and immediately re-render table
     runnerActionStates[runnerId] = 'starting';
+    const rObj = cachedRunnersList.find(r => r.runner_id === runnerId);
+    if (rObj) {
+      rObj.status = 'Running';
+      if (!rObj.current_workflow) rObj.current_workflow = 'Starting...';
+    }
     renderRunnersTable();
 
     try {
@@ -1318,10 +1323,11 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ runner_id: runnerId })
       });
       const data = await res.json();
-      await fetchStatus();
+      setTimeout(fetchStatus, 400);
     } catch (err) {
       console.error('Failed to start runner execution:', err);
       delete runnerActionStates[runnerId];
+      if (rObj) rObj.status = 'Idle';
       renderRunnersTable();
     }
   };
@@ -1330,6 +1336,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (confirm(`Stop execution for runner ${runnerId}?`)) {
       // Instant snap update: mark runner as stopping and immediately re-render table
       runnerActionStates[runnerId] = 'stopping';
+      const rObj = cachedRunnersList.find(r => r.runner_id === runnerId);
+      if (rObj) {
+        rObj.status = 'Idle';
+        rObj.current_workflow = null;
+      }
       renderRunnersTable();
 
       try {
@@ -1339,7 +1350,7 @@ document.addEventListener('DOMContentLoaded', () => {
           body: JSON.stringify({ runner_id: runnerId })
         });
         const data = await res.json();
-        await fetchStatus();
+        setTimeout(fetchStatus, 400);
       } catch (err) {
         console.error('Failed to stop runner execution:', err);
         delete runnerActionStates[runnerId];

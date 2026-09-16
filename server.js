@@ -1838,8 +1838,9 @@ app.get('/api/status', async (req, res) => {
           execution_id: null,
           portal_id: null
         });
-      } else {
-        if (info.status) regItem.status = (info.status === 'running' ? 'Running' : 'Idle');
+        if (info.status) {
+          regItem.status = (String(info.status).toLowerCase() === 'running' || info.status === 'Busy') ? 'Running' : info.status;
+        }
         if (info.last_heartbeat) regItem.last_heartbeat = info.last_heartbeat;
         if (info.client_id) regItem.client_id = info.client_id;
       }
