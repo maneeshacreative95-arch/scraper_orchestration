@@ -1189,7 +1189,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     runnerRegistryTableBody.innerHTML = '';
     if (currentRunners.length === 0) {
-      runnerRegistryTableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--color-text-muted);">No runners registered.</td></tr>`;
+      runnerRegistryTableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--color-text-muted);">No runners registered.</td></tr>`;
       return;
     }
 
@@ -1227,7 +1227,6 @@ document.addEventListener('DOMContentLoaded', () => {
         <td><strong>${r.server_name || r.runner_name || '-'}</strong></td>
         <td><code>${r.runner_id}</code></td>
         <td>${r.version ? `<span class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.72rem; padding: 2px 8px; font-weight: 600;">v${String(r.version).replace(/^v/i, '')}</span>` : '<span style="color: var(--color-text-muted);">-</span>'}</td>
-        <td><code>${r.host_ip || r.server_ip || '-'}</code></td>
         <td>${r.agent_name || '-'}</td>
         <td><span class="badge ${statusClass}">${displayStatus}</span></td>
         <td style="font-size: 0.75rem;">${r.last_heartbeat ? new Date(r.last_heartbeat).toLocaleTimeString() : '-'}</td>
