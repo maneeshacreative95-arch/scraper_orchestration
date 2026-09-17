@@ -571,24 +571,23 @@ function handleWsConnection(ws, req) {
       const eventType = data.event || data.type || data.action;
 
       if (eventType === 'register') {
-        const runnerId = data.runner_id || `runner_${data.client_id || '1572'}`;
-        authenticatedRunnerId = runnerId;
-
-        wsConnectedRunners.set(runnerId, {
-          ws: ws,
-          runner_id: runnerId,
-          runner_name: data.runner_name || runnerId,
-          client_id: parseInt(data.client_id, 10) || 1572,
-          server_ip: data.server_ip || clientIp,
-          port: data.port || 7500,
-          connected_at: new Date(),
-          last_heartbeat: new Date(),
-          status: 'Idle'
-        });
-
+        let runnerId = data.runner_id || `runner_${data.client_id || '1572'}`;
         const parsedClientId = parseInt(data.client_id, 10) || 1572;
         const hostIp = `${data.server_ip || clientIp}:${data.port || 7500}`;
         const runnerDisplayName = data.runner_name || `Client ${parsedClientId} (${clientIp})`;
+
+        // Guarantee unique runner_id per machine even if multiple PCs share the same client_id (e.g. runner_1572)
+        if (runnerDisplayName.includes('(')) {
+          const match = runnerDisplayName.match(/\((.*?)\)/);
+          if (match && match[1]) {
+            const cleanMachine = match[1].replace(/[^a-zA-Z0-9_-]/g, '_');
+            if (!runnerId.includes(cleanMachine)) {
+              runnerId = `${runnerId}_${cleanMachine}`;
+            }
+          }
+        }
+
+        authenticatedRunnerId = runnerId;
 
         wsConnectedRunners.set(runnerId, {
           ws: ws,
@@ -602,7 +601,7 @@ function handleWsConnection(ws, req) {
           status: 'Idle'
         });
 
-        let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        let regItem = runnerRegistry.find(r => r.runner_id === runnerId || (r.agent_name === runnerDisplayName && r.client_id === parsedClientId));
         if (regItem) {
           regItem.runner_id = runnerId;
           regItem.client_id = parsedClientId;
