@@ -39,35 +39,35 @@ async function refreshDbMetricsAsync() {
     try {
       const [totalVendorRows] = await connection.query('SELECT COUNT(*) as count FROM kf_vendor');
       newMetrics.totalScraped = totalVendorRows[0]?.count || 0;
-    } catch (err) {}
+    } catch (err) { }
 
     try {
       const [totalSourceRows] = await connection.query('SELECT COUNT(*) as count FROM kfvendor_source');
       newMetrics.sourceTotalScraped = totalSourceRows[0]?.count || 0;
-    } catch (err) {}
+    } catch (err) { }
 
     try {
       const [emailRows] = await connection.query("SELECT COUNT(*) as count FROM kf_vendor WHERE email != '' AND email IS NOT NULL");
       newMetrics.emailsFound = emailRows[0]?.count || 0;
-    } catch (e) {}
+    } catch (e) { }
 
     try {
       const [phoneRows] = await connection.query("SELECT COUNT(*) as count FROM kf_vendor WHERE phone != '' AND phone IS NOT NULL");
       newMetrics.phonesFound = phoneRows[0]?.count || 0;
-    } catch (e) {}
+    } catch (e) { }
 
     try {
       const [todayRows] = await connection.query(
         "SELECT COUNT(*) as count FROM kf_vendor WHERE DATE(INSRT_DTM) = CURDATE() OR DATE(SCRAPPING_TIME) = CURDATE()"
       );
       newMetrics.scrapedToday = todayRows[0]?.count || 0;
-    } catch (e) {}
+    } catch (e) { }
 
     cachedDbMetrics = newMetrics;
   } catch (dbErr) {
     // Fail silently in background
   } finally {
-    if (connection) await connection.end().catch(() => {});
+    if (connection) await connection.end().catch(() => { });
   }
 }
 
@@ -367,7 +367,7 @@ app.get('/api/auth/me', (req, res) => {
 // Middleware: Client Extraction & Strict Multi-Tenant Isolation Check
 function extractClientContext(req, res, next) {
   const token = req.headers['x-session-token'] || req.headers['authorization']?.replace('Bearer ', '') || req.query.token;
-  
+
   let session = null;
   if (token && activeSessions[token]) {
     session = activeSessions[token];
@@ -509,8 +509,8 @@ async function dispatchNextQueuedBatch(runnerId) {
 
   // Find next Queued or Pending batch
   const queuedBatch = cityQueue.find(c => c.status === 'Queued' && (c.assigned_agent === runnerId || c.assigned_agent === 'Manisha (Local PC)')) ||
-                      cityQueue.find(c => c.status === 'Queued') ||
-                      cityQueue.find(c => c.status === 'Pending');
+    cityQueue.find(c => c.status === 'Queued') ||
+    cityQueue.find(c => c.status === 'Pending');
 
   if (!queuedBatch) return;
 
@@ -589,11 +589,14 @@ function handleWsConnection(ws, req) {
 
         authenticatedRunnerId = runnerId;
 
+        const runnerVersion = data.version;
+
         wsConnectedRunners.set(runnerId, {
           ws: ws,
           runner_id: runnerId,
           runner_name: runnerDisplayName,
           client_id: parsedClientId,
+          version: runnerVersion,
           server_ip: data.server_ip || clientIp,
           port: data.port || 7500,
           connected_at: new Date(),
@@ -607,12 +610,14 @@ function handleWsConnection(ws, req) {
           regItem.client_id = parsedClientId;
           regItem.agent_name = runnerDisplayName;
           regItem.server_name = runnerDisplayName;
+          regItem.version = runnerVersion;
           regItem.status = 'Idle';
           regItem.last_heartbeat = new Date();
           regItem.host_ip = hostIp;
         } else {
           runnerRegistry.push({
             runner_id: runnerId,
+            version: runnerVersion,
             server_name: runnerDisplayName,
             host_ip: hostIp,
             agent_name: runnerDisplayName,
@@ -668,11 +673,13 @@ function handleWsConnection(ws, req) {
           const clientObj = wsConnectedRunners.get(runnerId);
           const isRunning = data.status && (String(data.status).toLowerCase() === 'running' || data.status === 'Busy');
           clientObj.status = isRunning ? 'Running' : 'Idle';
+          if (data.version) clientObj.version = data.version;
 
           let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
           if (!regItem) {
             regItem = {
               runner_id: runnerId,
+              version: data.version || clientObj.version || null,
               server_name: clientObj.runner_name || `Server (${clientObj.server_ip})`,
               host_ip: `${clientObj.server_ip}:${clientObj.port}`,
               agent_name: clientObj.runner_name || runnerId,
@@ -688,6 +695,7 @@ function handleWsConnection(ws, req) {
           } else {
             regItem.last_heartbeat = new Date();
             regItem.status = isRunning ? 'Running' : 'Idle';
+            if (data.version) regItem.version = data.version;
             if (isRunning) {
               if (data.category) regItem.current_workflow = data.category;
               if (data.execution_id) regItem.execution_id = data.execution_id;
@@ -701,7 +709,7 @@ function handleWsConnection(ws, req) {
       } else if (eventType === 'progress') {
         const runnerId = data.runner_id || authenticatedRunnerId;
         console.log(`[WEBSOCKET PROGRESS] Runner '${runnerId}': Category '${data.category || '-'}', Status '${data.status || '-'}', ExecID '${data.execution_id || '-'}'`);
-        
+
         const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
         if (regItem) {
           regItem.status = 'Running';
@@ -713,7 +721,7 @@ function handleWsConnection(ws, req) {
       } else if (eventType === 'execution_completed') {
         const runnerId = data.runner_id || authenticatedRunnerId;
         console.log(`[WEBSOCKET COMPLETED] Runner '${runnerId}' completed task (SP_ID: ${data.sp_id || '-'}, Portal: ${data.portal_id || '-'})`);
-        
+
         const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
         if (regItem) {
           regItem.status = 'Idle';
@@ -749,7 +757,7 @@ function handleWsConnection(ws, req) {
       } else if (eventType === 'execution_failed') {
         const runnerId = data.runner_id || authenticatedRunnerId;
         console.error(`[WEBSOCKET FAILED] Runner '${runnerId}' failed task: ${data.error}`);
-        
+
         const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
         if (regItem) regItem.status = 'Idle';
 
@@ -823,8 +831,8 @@ function getConnectedWsRunner(runnerOrAgent) {
       const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
       if (heartbeatAgeSec > 35) continue; // Ignore stale heartbeats (>35s)
 
-      if ((targetId && (id === targetId || info.runner_id === targetId)) || 
-          (targetName && info.runner_name && info.runner_name.toLowerCase() === targetName.toLowerCase())) {
+      if ((targetId && (id === targetId || info.runner_id === targetId)) ||
+        (targetName && info.runner_name && info.runner_name.toLowerCase() === targetName.toLowerCase())) {
         return info;
       }
     }
@@ -942,12 +950,12 @@ async function getPortalIdByCityName(cityName, fallbackId) {
 }
 
 async function getValidGroqChatModel(key, preferredModel) {
-  const isNonChatModel = (m) => !m || 
-    m.toLowerCase().includes('prompt-guard') || 
-    m.toLowerCase().includes('guard') || 
-    m.toLowerCase().includes('whisper') || 
-    m.toLowerCase().includes('audio') || 
-    m.toLowerCase().includes('speech') || 
+  const isNonChatModel = (m) => !m ||
+    m.toLowerCase().includes('prompt-guard') ||
+    m.toLowerCase().includes('guard') ||
+    m.toLowerCase().includes('whisper') ||
+    m.toLowerCase().includes('audio') ||
+    m.toLowerCase().includes('speech') ||
     m.toLowerCase().includes('orpheus') ||
     m.toLowerCase().includes('compound');
 
@@ -991,9 +999,9 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
 
     if (rows && rows.length > 0) {
       const match = rows.find(r => r.LLM_PROVIDER === provider && r.STATUS === 'ACTIVE') ||
-                    rows.find(r => r.LLM_PROVIDER === provider) ||
-                    rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
-                    rows[0];
+        rows.find(r => r.LLM_PROVIDER === provider) ||
+        rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+        rows[0];
 
       if (match) {
         let selectedModel = match.MODEL_NAME || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -1087,9 +1095,9 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     if (!llmRes.ok && (llmRes.status === 404 || llmRes.status === 400)) {
       const errText = await llmRes.text();
       let parsedErr;
-      try { parsedErr = JSON.parse(errText); } catch (e) {}
+      try { parsedErr = JSON.parse(errText); } catch (e) { }
 
-      const isModelError = llmRes.status === 404 || 
+      const isModelError = llmRes.status === 404 ||
         (parsedErr && parsedErr.error && (parsedErr.error.code === 'model_not_found' || (parsedErr.error.message && parsedErr.error.message.toLowerCase().includes('model'))));
 
       if (isModelError) {
@@ -1112,7 +1120,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
           .replace(/:\s*\.\.\./g, ': 5000')
           .replace(/:\s*"\.\.\."/g, ': 5000')
           .replace(/,\s*([\]}])/g, '$1');
-        
+
         let parsed = null;
         try {
           parsed = JSON.parse(cleanedJson);
@@ -1149,7 +1157,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
       console.error('[LLM API Error]', llmRes.status, errText);
 
       let parsedErr;
-      try { parsedErr = JSON.parse(errText); } catch (e) {}
+      try { parsedErr = JSON.parse(errText); } catch (e) { }
 
       let userFriendlyMsg = `Groq API Error (${llmRes.status}): ${parsedErr?.error?.message || errText}`;
       logReallocation(`[LLM DISCOVERY ERROR] ${userFriendlyMsg}`);
@@ -1223,7 +1231,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     discoveredList = rows.map(r => {
       const parsedContent = parseInt(r.contentcount, 10);
       let baseDbCount = (isNaN(parsedContent) || parsedContent <= 0) ? 5000 : parsedContent;
-      
+
       // Dynamic realistic variation per city based on tier and portal ID hash
       const pId = parseInt(r.portalid, 10) || 1000;
       const cName = r.portalname.toLowerCase();
@@ -1295,7 +1303,7 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
       if (!portalId || portalId === '-') {
         const cityNameClean = item.city.toLowerCase().trim();
         const altCityName = cityNameClean.replace('gurugram', 'gurgaon').replace('bengaluru', 'bangalore').replace('mumbai', 'bombay');
-        
+
         const [pRows] = await connection.query(
           `SELECT portalid, contentcount FROM portal 
            WHERE (LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) LIKE ?)
@@ -1703,10 +1711,10 @@ app.get('/api/status', async (req, res) => {
   const errorHistory = [];
 
   scraperExecutions.forEach(exec => {
-    const successRate = exec.total_batches > 0 
+    const successRate = exec.total_batches > 0
       ? Math.round((exec.completed_batches / exec.total_batches) * 100)
       : 100;
-    
+
     const failedBatches = exec.failed_batches || 0;
 
     const execPortalId = resolvePortalIdFromText(exec.city, exec.portal_id);
@@ -1812,7 +1820,7 @@ app.get('/api/status', async (req, res) => {
       if (avgTime > 90) {
         recommendations.push({
           issue: `${a.agent_name} slower than average`,
-          recommendation: `Reduce batch size from ${schedulerConfig.batch_size} -> ${Math.round(schedulerConfig.batch_size/2)}.`
+          recommendation: `Reduce batch size from ${schedulerConfig.batch_size} -> ${Math.round(schedulerConfig.batch_size / 2)}.`
         });
       }
     }
@@ -1824,104 +1832,107 @@ app.get('/api/status', async (req, res) => {
       recommendation: 'Queue discovery items to utilize full allocation capacity.'
     });
   }
-    const client_id = req.clientId || defaultScraperConfig.user_id;
-    const isAdmin = req.isAdmin;
+  const client_id = req.clientId || defaultScraperConfig.user_id;
+  const isAdmin = req.isAdmin;
 
-    // Sync all active WebSocket connections into runnerRegistry dynamically
-    for (const [id, info] of wsConnectedRunners.entries()) {
-      let regItem = runnerRegistry.find(r => r.runner_id === id);
-      if (!regItem) {
-        runnerRegistry.push({
-          runner_id: id,
-          server_name: info.runner_name || `Server (${info.server_ip})`,
-          host_ip: `${info.server_ip}:${info.port}`,
-          agent_name: info.runner_name || id,
-          client_id: info.client_id,
-          status: info.status || 'Idle',
-          last_heartbeat: info.last_heartbeat || new Date(),
-          current_workflow: null,
-          current_batch: null,
-          execution_id: null,
-          portal_id: null
-        });
-        if (info.status) {
-          regItem.status = (String(info.status).toLowerCase() === 'running' || info.status === 'Busy') ? 'Running' : info.status;
-        }
-        if (info.last_heartbeat) regItem.last_heartbeat = info.last_heartbeat;
-        if (info.client_id) regItem.client_id = info.client_id;
+  // Sync all active WebSocket connections into runnerRegistry dynamically
+  for (const [id, info] of wsConnectedRunners.entries()) {
+    let regItem = runnerRegistry.find(r => r.runner_id === id);
+    if (!regItem) {
+      runnerRegistry.push({
+        runner_id: id,
+        version: info.version || null,
+        server_name: info.runner_name || `Server (${info.server_ip})`,
+        host_ip: `${info.server_ip}:${info.port}`,
+        agent_name: info.runner_name || id,
+        client_id: info.client_id,
+        status: info.status || 'Idle',
+        last_heartbeat: info.last_heartbeat || new Date(),
+        current_workflow: null,
+        current_batch: null,
+        execution_id: null,
+        portal_id: null
+      });
+    } else {
+      if (info.version) regItem.version = info.version;
+      if (info.status) {
+        regItem.status = (String(info.status).toLowerCase() === 'running' || info.status === 'Busy') ? 'Running' : info.status;
       }
+      if (info.last_heartbeat) regItem.last_heartbeat = info.last_heartbeat;
+      if (info.client_id) regItem.client_id = info.client_id;
     }
+  }
 
-    const filteredQueue = cityQueue.filter(c => isAdmin || (c.client_id || 1572) === client_id);
-    const filteredAgents = agents;
-    const filteredRunners = runnerRegistry; // Independent of client_id: show all connected & registered runners!
-    const filteredAllocations = allocations;
-    const filteredSchedulerBatches = schedulerBatches.filter(b => isAdmin || (b.client_id || 1572) === client_id);
-    const filteredReallocations = reallocationEvents;
-    const filteredErrors = errorHistory;
-    const filteredPerformance = performanceMatrix;
+  const filteredQueue = cityQueue.filter(c => isAdmin || (c.client_id || 1572) === client_id);
+  const filteredAgents = agents;
+  const filteredRunners = runnerRegistry; // Independent of client_id: show all connected & registered runners!
+  const filteredAllocations = allocations;
+  const filteredSchedulerBatches = schedulerBatches.filter(b => isAdmin || (b.client_id || 1572) === client_id);
+  const filteredReallocations = reallocationEvents;
+  const filteredErrors = errorHistory;
+  const filteredPerformance = performanceMatrix;
 
-    const activeRunners = filteredRunners.filter(r => r.status === 'Running' || r.status === 'Busy').length;
-    const idleRunners = filteredRunners.filter(r => r.status === 'Idle').length;
-    const failedRunners = filteredRunners.filter(r => r.status === 'Offline' || r.status === 'Crashed' || r.status === 'Disconnected').length;
+  const activeRunners = filteredRunners.filter(r => r.status === 'Running' || r.status === 'Busy').length;
+  const idleRunners = filteredRunners.filter(r => r.status === 'Idle').length;
+  const failedRunners = filteredRunners.filter(r => r.status === 'Offline' || r.status === 'Crashed' || r.status === 'Disconnected').length;
 
-    const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
+  const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
 
-    const activeLlmConfig = await getActiveApiKey(client_id, 'GROQ', req.firmId);
+  const activeLlmConfig = await getActiveApiKey(client_id, 'GROQ', req.firmId);
 
-    res.json({
-      backendOnline,
-      backendStatus,
-      client_id: client_id,
-      is_admin: isAdmin,
-      user_id: client_id,
-      firm_id: dbMetrics.firm_id,
-      memberid: client_id,
-      llmConfig: {
-        exists: activeLlmConfig.exists,
-        provider: activeLlmConfig.provider,
-        model: activeLlmConfig.model,
-        status: activeLlmConfig.status,
-        isActive: activeLlmConfig.isActive,
-        message: activeLlmConfig.exists
-          ? (activeLlmConfig.isActive ? `Connected: ${activeLlmConfig.provider} (${activeLlmConfig.model})` : `Inactive: ${activeLlmConfig.provider} (${activeLlmConfig.model})`)
-          : 'No API configured. Please add one in MyBlocks API Key Manager.'
-      },
-      cityQueue: filteredQueue,
-      agents: filteredAgents,
-      runners: filteredRunners,
-      discoveryResults: latestDiscoveryResults,
-      validationResults: latestValidationResults,
-      allocations: filteredAllocations,
-      schedulerBatches: filteredSchedulerBatches,
-      executions,
-      executionLogs,
-      reallocationEvents: filteredReallocations,
-      errorHistory: filteredErrors,
-      performanceMatrix: filteredPerformance,
-      allocationEngineActive,
-      schedulerConfig,
-      currentTopic: currentOrchestrationTopic,
-      metrics: {
-        completedStates: completedStatesList.length,
-        completedCities,
-        totalScraped: dbMetrics.totalScraped,
-        sourceTotalScraped: dbMetrics.sourceTotalScraped,
-        scrapedToday: dbMetrics.scrapedToday,
-        emailsFound: dbMetrics.emailsFound,
-        phonesFound: dbMetrics.phonesFound,
-        activeRunners,
-        idleRunners,
-        failedRunners,
-        avgCompaniesPerMin: (dbMetrics.scrapedToday / 60).toFixed(1),
-        avgSuccessRate,
-        avgExecutionTime,
-        topAgent,
-        slowestCity,
-        retryQueueCount: filteredErrors.length
-      },
-      recommendations
-    });
+  res.json({
+    backendOnline,
+    backendStatus,
+    client_id: client_id,
+    is_admin: isAdmin,
+    user_id: client_id,
+    firm_id: dbMetrics.firm_id,
+    memberid: client_id,
+    llmConfig: {
+      exists: activeLlmConfig.exists,
+      provider: activeLlmConfig.provider,
+      model: activeLlmConfig.model,
+      status: activeLlmConfig.status,
+      isActive: activeLlmConfig.isActive,
+      message: activeLlmConfig.exists
+        ? (activeLlmConfig.isActive ? `Connected: ${activeLlmConfig.provider} (${activeLlmConfig.model})` : `Inactive: ${activeLlmConfig.provider} (${activeLlmConfig.model})`)
+        : 'No API configured. Please add one in MyBlocks API Key Manager.'
+    },
+    cityQueue: filteredQueue,
+    agents: filteredAgents,
+    runners: filteredRunners,
+    discoveryResults: latestDiscoveryResults,
+    validationResults: latestValidationResults,
+    allocations: filteredAllocations,
+    schedulerBatches: filteredSchedulerBatches,
+    executions,
+    executionLogs,
+    reallocationEvents: filteredReallocations,
+    errorHistory: filteredErrors,
+    performanceMatrix: filteredPerformance,
+    allocationEngineActive,
+    schedulerConfig,
+    currentTopic: currentOrchestrationTopic,
+    metrics: {
+      completedStates: completedStatesList.length,
+      completedCities,
+      totalScraped: dbMetrics.totalScraped,
+      sourceTotalScraped: dbMetrics.sourceTotalScraped,
+      scrapedToday: dbMetrics.scrapedToday,
+      emailsFound: dbMetrics.emailsFound,
+      phonesFound: dbMetrics.phonesFound,
+      activeRunners,
+      idleRunners,
+      failedRunners,
+      avgCompaniesPerMin: (dbMetrics.scrapedToday / 60).toFixed(1),
+      avgSuccessRate,
+      avgExecutionTime,
+      topAgent,
+      slowestCity,
+      retryQueueCount: filteredErrors.length
+    },
+    recommendations
+  });
 });
 
 // Logs Endpoint
@@ -2025,7 +2036,7 @@ async function triggerSelfHealingRecoverySequence(failedBatch, runnerInfo, reaso
 
   try {
     await killStaleChromeDriverProcesses();
-  } catch (e) {}
+  } catch (e) { }
 
   await new Promise(r => setTimeout(r, 1500));
 
@@ -2140,7 +2151,7 @@ app.post('/api/scheduler/config', (req, res) => {
   const { batch_size, max_parallel_agents, run_basic, run_contact, run_social, run_leader } = req.body;
   if (batch_size) schedulerConfig.batch_size = parseInt(batch_size, 10);
   if (max_parallel_agents) schedulerConfig.max_parallel_agents = parseInt(max_parallel_agents, 10);
-  
+
   if (run_basic !== undefined) schedulerConfig.run_basic = !!run_basic;
   if (run_contact !== undefined) schedulerConfig.run_contact = !!run_contact;
   if (run_social !== undefined) schedulerConfig.run_social = !!run_social;
@@ -2170,7 +2181,7 @@ app.get('/api/user-llm-config', async (req, res) => {
     model: config.model || '-',
     status: config.status || 'INACTIVE',
     isActive: config.isActive,
-    message: config.exists 
+    message: config.exists
       ? (config.isActive ? `Connected: ${config.provider} (${config.model})` : `Inactive: ${config.provider} (${config.model})`)
       : 'No API configured. Please add one in MyBlocks API Key Manager.'
   });
@@ -2208,7 +2219,7 @@ async function initQcDatabase() {
   } catch (err) {
     console.log('[QC ENGINE] Notice initializing QC table:', err.message);
   } finally {
-    if (connection) await connection.end().catch(() => {});
+    if (connection) await connection.end().catch(() => { });
   }
 }
 initQcDatabase();
@@ -2378,7 +2389,7 @@ app.post('/api/qc/process-batch', async (req, res) => {
   let connection;
   try {
     connection = await mysql.createConnection(dbConfig);
-    
+
     // Check against kf_vendor database for existing duplicates (Rule 7)
     const filteredValid = [];
     for (const rec of validRecords) {
@@ -2459,7 +2470,7 @@ app.post('/api/qc/process-batch', async (req, res) => {
     console.error('Error processing QC batch:', err.message);
     res.status(500).json({ error: 'QC Batch evaluation failed: ' + err.message });
   } finally {
-    if (connection) await connection.end().catch(() => {});
+    if (connection) await connection.end().catch(() => { });
   }
 });
 
@@ -2475,7 +2486,7 @@ app.get('/api/qc/summary', async (req, res) => {
   } catch (e) {
     dbFailedRecords = qcFailedRecordsList.slice(0, 100);
   } finally {
-    if (connection) await connection.end().catch(() => {});
+    if (connection) await connection.end().catch(() => { });
   }
 
   const grandTotalScraped = qcBatchReports.reduce((acc, r) => acc + r.totalScraped, 0);
@@ -2505,7 +2516,7 @@ app.get('/api/qc/summary', async (req, res) => {
 
 app.post('/api/qc/retry-contact', async (req, res) => {
   const { failed_id } = req.body || {};
-  
+
   let targetRecord = qcFailedRecordsList.find(r => String(r.id) === String(failed_id));
   if (!targetRecord) {
     let connection;
@@ -2513,8 +2524,8 @@ app.post('/api/qc/retry-contact', async (req, res) => {
       connection = await mysql.createConnection(dbConfig);
       const [rows] = await connection.query(`SELECT * FROM qc_failed_records WHERE id = ? LIMIT 1`, [failed_id]);
       if (rows && rows.length > 0) targetRecord = rows[0];
-    } catch (e) {} finally {
-      if (connection) await connection.end().catch(() => {});
+    } catch (e) { } finally {
+      if (connection) await connection.end().catch(() => { });
     }
   }
 
@@ -2613,7 +2624,7 @@ app.post('/api/queue/populate-region', async (req, res) => {
 function analyzeTopic(requestText) {
   if (!requestText) return { industry: 'General', country: 'India', region: 'South India', state: '', targetContacts: 0, hasExplicitTarget: false };
   const text = requestText.toLowerCase().trim();
-  
+
   // 1. Extract Target Contacts count only if user explicitly typed a number in prompt
   const contactMatch = text.match(/(\d+)\s*(?:contacts|companies|targets|records|leads)/);
   const hasExplicitTarget = !!contactMatch;
@@ -2637,7 +2648,7 @@ function analyzeTopic(requestText) {
 
   let state = '';
   const statesList = [
-    'karnataka', 'telangana', 'tamil nadu', 'kerala', 'andhra pradesh', 
+    'karnataka', 'telangana', 'tamil nadu', 'kerala', 'andhra pradesh',
     'goa', 'maharashtra', 'gujarat', 'haryana', 'punjab', 'delhi', 'west bengal',
     'rajasthan', 'uttar pradesh', 'bihar', 'odisha', 'madhya pradesh'
   ];
@@ -2675,7 +2686,7 @@ function analyzeTopic(requestText) {
 
   if (!industry) {
     const industriesList = [
-      'healthcare', 'ai startups', 'educational institutions', 'hotels', 'restaurants', 
+      'healthcare', 'ai startups', 'educational institutions', 'hotels', 'restaurants',
       'textile manufacturers', 'startups', 'technology', 'software', 'retail', 'finance', 'manufacturing'
     ];
     for (const ind of industriesList) {
@@ -2705,7 +2716,7 @@ app.post('/api/queue/populate-topic', async (req, res) => {
   let connection;
   try {
     connection = await mysql.createConnection(dbConfig);
-    
+
     let query = `SELECT portalid, portalname, state, contentcount 
                  FROM portal 
                  WHERE status = 'ACTIVE' AND portalname != ''`;
@@ -2731,7 +2742,7 @@ app.post('/api/queue/populate-topic', async (req, res) => {
 
     rows.forEach((row, idx) => {
       const parsedCount = parseInt(row.contentcount, 10);
-      const estCount = hasExplicitTarget 
+      const estCount = hasExplicitTarget
         ? Math.min((isNaN(parsedCount) || parsedCount <= 0) ? targetContacts : parsedCount, targetContacts)
         : targetContacts;
 
@@ -2770,7 +2781,7 @@ app.post('/api/queue/populate-topic', async (req, res) => {
 // Full Orchestration Endpoint (Step 1 to Step 4)
 app.post('/api/orchestrate/full-workflow', async (req, res) => {
   const promptText = req.body.prompt || req.body.request || (req.body.topic ? `${req.body.topic} across ${req.body.region || 'South India'}` : '');
-  
+
   if (!promptText) {
     return res.status(400).json({ error: 'A prompt sentence is required (e.g. "Run healthcare companies across South India").' });
   }
@@ -2783,7 +2794,7 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
 
   try {
     logReallocation(`[LLM DISCOVERY] Initiating Region Discovery for prompt '${promptText}' (Topic: '${currentOrchestrationTopic}', Coverage: '${coverageScope}', User: '${req.clientId}')...`);
-    
+
     // Step 1: LLM Region Discovery using logged-in User's MyBlocks API Key Config
     const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit, req.clientId, req.firmId);
     latestDiscoveryResults = discovered;
@@ -2829,7 +2840,7 @@ app.get('/api/runners', (req, res) => {
 app.post('/api/runners/heartbeat', (req, res) => {
   const { runner_id, status, current_batch, execution_id } = req.body;
   const runner = runnerRegistry.find(r => r.runner_id === runner_id || r.agent_name === runner_id);
-  
+
   if (runner) {
     runner.last_heartbeat = new Date();
     if (status) runner.status = status;
@@ -2910,8 +2921,8 @@ app.post('/api/exe/start', async (req, res) => {
 
 app.post('/api/exe/stop', async (req, res) => {
   try {
-    try { await execPromise(`taskkill /F /IM scraperrun_v1.0.8.exe /T`); } catch (e) {}
-    try { await execPromise(`taskkill /F /IM chromedriver.exe /T`); } catch (e) {}
+    try { await execPromise(`taskkill /F /IM scraperrun_v1.0.8.exe /T`); } catch (e) { }
+    try { await execPromise(`taskkill /F /IM chromedriver.exe /T`); } catch (e) { }
 
     // Find and stop active executions on local scraper manager
     try {
@@ -2927,14 +2938,14 @@ app.post('/api/exe/stop', async (req, res) => {
               body: JSON.stringify({}),
               signal: AbortSignal.timeout(2000)
             });
-          } catch(e) {}
+          } catch (e) { }
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     wsConnectedRunners.forEach((info) => {
       if (info.ws && info.ws.readyState === 1) {
-        try { info.ws.send(JSON.stringify({ event: 'stop_execution', message: 'Stop requested by Administrator' })); } catch(e){}
+        try { info.ws.send(JSON.stringify({ event: 'stop_execution', message: 'Stop requested by Administrator' })); } catch (e) { }
       }
     });
 
@@ -2984,7 +2995,7 @@ app.post('/api/runners/start', async (req, res) => {
   }
 
   const targetCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && (c.status === 'Queued' || c.status === 'Pending'))
-                  || cityQueue.find(c => c.status === 'Queued' || c.status === 'Pending');
+    || cityQueue.find(c => c.status === 'Queued' || c.status === 'Pending');
 
   if (targetCity) {
     runnerExecutionLocks.delete(runner.runner_id);
@@ -2994,7 +3005,7 @@ app.post('/api/runners/start', async (req, res) => {
     wsConnectedRunners.forEach((info, id) => {
       if (id === runner.runner_id || info.runner_name === runner.agent_name || (runner.agent_name && runner.agent_name.includes(info.runner_name))) {
         if (info.ws && info.ws.readyState === 1) {
-          try { info.ws.send(JSON.stringify({ event: 'start_execution', runner_id: runner.runner_id })); } catch(e){}
+          try { info.ws.send(JSON.stringify({ event: 'start_execution', runner_id: runner.runner_id })); } catch (e) { }
         }
       }
     });
@@ -3013,7 +3024,7 @@ app.post('/api/runners/stop', async (req, res) => {
   wsConnectedRunners.forEach((info, id) => {
     if (id === runner.runner_id || info.runner_name === runner.agent_name || (runner.agent_name && runner.agent_name.includes(info.runner_name))) {
       if (info.ws && info.ws.readyState === 1) {
-        try { info.ws.send(JSON.stringify({ event: 'stop_execution', runner_id: runner.runner_id, execution_id: runner.execution_id })); } catch(e){}
+        try { info.ws.send(JSON.stringify({ event: 'stop_execution', runner_id: runner.runner_id, execution_id: runner.execution_id })); } catch (e) { }
       }
     }
   });
@@ -3026,7 +3037,7 @@ app.post('/api/runners/stop', async (req, res) => {
         body: JSON.stringify({}),
         signal: AbortSignal.timeout(2000)
       });
-    } catch (e) {}
+    } catch (e) { }
   }
 
   try {
@@ -3042,10 +3053,10 @@ app.post('/api/runners/stop', async (req, res) => {
             body: JSON.stringify({}),
             signal: AbortSignal.timeout(2000)
           });
-        } catch(e) {}
+        } catch (e) { }
       }
     }
-  } catch(e) {}
+  } catch (e) { }
 
   const runningCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && c.status === 'Running');
   if (runningCity) {
@@ -3389,8 +3400,8 @@ async function triggerScraperRun(city, agent) {
 
   // 2. If NO active WebSocket connection, DO NOT fall back to local 127.0.0.1 HTTP unless local agent is explicitly target
   const runner = runnerRegistry.find(r => r.agent_name === agent.agent_name || r.runner_id === agent.agent_id);
-  const isLocalAgent = (runner && (runner.host_ip.includes('127.0.0.1') || runner.host_ip.includes('localhost'))) || 
-                       (agent.agent_name && agent.agent_name.toLowerCase().includes('local'));
+  const isLocalAgent = (runner && (runner.host_ip.includes('127.0.0.1') || runner.host_ip.includes('localhost'))) ||
+    (agent.agent_name && agent.agent_name.toLowerCase().includes('local'));
 
   if (!isLocalAgent) {
     console.warn(`[DISPATCH HOLD] Runner '${agent.agent_name}' has no active WebSocket connection. Holding batch in Pending state.`);
@@ -3423,7 +3434,7 @@ async function triggerScraperRun(city, agent) {
       if (data.execution_id) {
         city.execution_id = data.execution_id;
         agent.execution_id = data.execution_id;
-        
+
         executions[data.execution_id] = {
           execution_id: data.execution_id,
           user_id: currentUserId,
@@ -3500,8 +3511,8 @@ app.post('/api/scheduler/batch', (req, res) => {
 // Helper to kill stale chromedriver.exe processes
 async function killStaleChromeDriverProcesses() {
   try {
-    await execPromise('taskkill /F /IM chromedriver.exe /T').catch(() => {});
-  } catch (err) {}
+    await execPromise('taskkill /F /IM chromedriver.exe /T').catch(() => { });
+  } catch (err) { }
 }
 
 // Automatic Portal Allocation Engine for Registered Runners
@@ -3696,7 +3707,7 @@ function updateWorkflowState(scraperExecutions) {
   runnerRegistry.forEach(r => {
     const runningBatch = cityQueue.find(c => (c.assigned_agent === r.agent_name || c.assigned_agent === r.runner_id) && c.status === 'Running');
     const queuedBatch = cityQueue.find(c => (c.assigned_agent === r.agent_name || c.assigned_agent === r.runner_id) && c.status === 'Queued');
-    
+
     if (runningBatch) {
       r.current_workflow = runningBatch.city_name;
       r.current_batch = runningBatch.batch_count || '1/1';
@@ -3758,7 +3769,7 @@ function updateWorkflowState(scraperExecutions) {
 
     if (realExec) {
       if (agent) agent.last_heartbeat = new Date();
-      
+
       const progressPercentage = parseFloat(realExec.progress) || 0;
 
       let processedCount = 0;
@@ -3875,7 +3886,7 @@ function autoReallocationEngine(scraperExecutions) {
         city.transitions.completed_at = city.completed_at;
         city.eta = '-';
       }
-      
+
       if (agent) {
         agent.status = 'Idle';
         agent.current_city = null;
@@ -3890,7 +3901,7 @@ function autoReallocationEngine(scraperExecutions) {
       // Record finished action to Reallocation Timeline
       const targetName = city ? city.city_name : (realExec.city || 'External Task');
       const userLabel = agent ? agent.agent_name : (realExec.username || 'System');
-      
+
       if (realExec.status === 'completed') {
         logReallocationEvent({
           event_type: 'Batch Completed',
@@ -3931,7 +3942,7 @@ function autoReallocationEngine(scraperExecutions) {
           const recoveryMsg = `⚠️ ChromeDriver Crash ('${isChromeError ? 'session not created' : 'renderer timeout'}') -> Killed Stale chromedriver.exe -> Retrying on ${agent ? agent.agent_name : 'Runner'} (Attempt 1/2) -> Resumed from Company ${resumeStartFrom}`;
           city.recovery_event = recoveryMsg;
           city.start_from = resumeStartFrom;
-          
+
           logReallocationEvent({
             event_type: 'Execution Failed (ChromeDriver/Timeout)',
             from_agent: agent ? agent.agent_name : 'Runner',
@@ -3986,7 +3997,7 @@ function autoReallocationEngine(scraperExecutions) {
           } else {
             city.status = 'Failed';
             city.recovery_event = `❌ Runner OFFLINE & No Idle Runners Available for Client ${cId}. Batch Marked FAILED at index ${resumeStartFrom}`;
-            
+
             logReallocationEvent({
               event_type: 'Execution Failed (ChromeDriver/Timeout)',
               from_agent: agent ? agent.agent_name : 'Runner',
@@ -4017,10 +4028,10 @@ function autoReallocationEngine(scraperExecutions) {
         const cityBatches = cityQueue.filter(c => c.city_name.startsWith(baseCityName));
         const allCompleted = cityBatches.every(c => c.status === 'Completed');
         const cId = (city.client_id || 1572);
-        
+
         if (allCompleted) {
           logReallocation(`[CITY COMPLETE] All batches for ${baseCityName} finished!`);
-          
+
           // Auto-activate the next city from Priority Queue for same client
           const nextPendingCity = cityQueue.find(c => c.status === 'Pending' && (c.client_id || 1572) === cId && !c.city_name.startsWith(baseCityName));
           if (nextPendingCity) {
@@ -4199,10 +4210,10 @@ async function monitorEngine() {
     }
   } catch (err) {
     // Only log if it's not a timeout, abort, or connection failed error to avoid repeated clutter
-    if (err.name !== 'TimeoutError' && 
-        err.name !== 'AbortError' && 
-        err.message !== 'fetch failed' && 
-        !err.message.includes('ECONNREFUSED')) {
+    if (err.name !== 'TimeoutError' &&
+      err.name !== 'AbortError' &&
+      err.message !== 'fetch failed' &&
+      !err.message.includes('ECONNREFUSED')) {
       console.error('[MONITOR] Error updating allocations:', err.message);
     }
   }
