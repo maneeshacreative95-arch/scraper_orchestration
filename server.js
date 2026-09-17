@@ -667,8 +667,8 @@ function handleWsConnection(ws, req) {
         const runnerId = data.runner_id || authenticatedRunnerId;
         if (runnerId && wsConnectedRunners.has(runnerId)) {
           const clientObj = wsConnectedRunners.get(runnerId);
-          clientObj.last_heartbeat = new Date();
-          if (data.status) clientObj.status = (data.status === 'running' ? 'Running' : 'Idle');
+          const isRunning = data.status && (String(data.status).toLowerCase() === 'running' || data.status === 'Busy');
+          clientObj.status = isRunning ? 'Running' : 'Idle';
 
           let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
           if (!regItem) {
@@ -678,17 +678,24 @@ function handleWsConnection(ws, req) {
               host_ip: `${clientObj.server_ip}:${clientObj.port}`,
               agent_name: clientObj.runner_name || runnerId,
               client_id: clientObj.client_id,
-              status: clientObj.status,
+              status: isRunning ? 'Running' : 'Idle',
               last_heartbeat: new Date(),
-              current_workflow: null,
+              current_workflow: isRunning ? (data.category || 'Scraping Execution') : null,
               current_batch: null,
-              execution_id: null,
+              execution_id: isRunning ? (data.execution_id || null) : null,
               portal_id: null
             };
             runnerRegistry.push(regItem);
           } else {
             regItem.last_heartbeat = new Date();
-            if (data.status) regItem.status = (data.status === 'running' ? 'Running' : 'Idle');
+            regItem.status = isRunning ? 'Running' : 'Idle';
+            if (isRunning) {
+              if (data.category) regItem.current_workflow = data.category;
+              if (data.execution_id) regItem.execution_id = data.execution_id;
+            } else {
+              regItem.current_workflow = null;
+              regItem.execution_id = null;
+            }
           }
         }
 
