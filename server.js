@@ -1031,15 +1031,16 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     let dbConn;
     try {
       dbConn = await mysql.createConnection(dbConfig);
+      const wordPattern = `[[:<:]]${searchClean.replace(/[^a-z0-9]/g, '')}[[:>:]]`;
       const [directRows] = await dbConn.query(
         `SELECT portalid, portalname, state, contentcount 
          FROM portal 
-         WHERE status = 'ACTIVE' AND portalname != '' AND (
+         WHERE status = 'ACTIVE' AND portalname != '' AND (type IS NULL OR type = '' OR type != 'MYBLOCKS.US') AND (
            LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(state)) = ? OR LOWER(TRIM(city)) = ? OR
-           LOWER(portalname) LIKE ? OR LOWER(state) LIKE ? OR LOWER(city) LIKE ?
+           LOWER(portalname) REGEXP ? OR LOWER(state) REGEXP ? OR LOWER(city) REGEXP ?
          )
-         ORDER BY CAST(contentcount AS UNSIGNED) DESC, portalid ASC LIMIT 30`,
-        [searchClean, searchClean, searchClean, `%${searchClean}%`, `%${searchClean}%`, `%${searchClean}%`]
+         ORDER BY CASE WHEN LOWER(TRIM(portalname)) = ? THEN 1 WHEN LOWER(TRIM(state)) = ? THEN 2 ELSE 3 END, CAST(contentcount AS UNSIGNED) DESC, portalid ASC LIMIT 30`,
+        [searchClean, searchClean, searchClean, wordPattern, wordPattern, wordPattern, searchClean, searchClean]
       );
 
       if (directRows && directRows.length > 0) {
@@ -1276,11 +1277,14 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
         const cityNameClean = item.city.toLowerCase().trim();
         const altCityName = cityNameClean.replace('gurugram', 'gurgaon').replace('bengaluru', 'bangalore').replace('mumbai', 'bombay');
 
+        const wordPattern = `[[:<:]]${cityNameClean.replace(/[^a-z0-9]/g, '')}[[:>:]]`;
         const [pRows] = await connection.query(
           `SELECT portalid, contentcount FROM portal 
-           WHERE (LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) LIKE ?)
+           WHERE status = 'ACTIVE' AND (type IS NULL OR type = '' OR type != 'MYBLOCKS.US') AND (
+             LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(portalname) REGEXP ?
+           )
            ORDER BY CASE WHEN LOWER(TRIM(portalname)) = ? THEN 1 WHEN LOWER(TRIM(portalname)) = ? THEN 2 ELSE 3 END, portalid ASC LIMIT 1`,
-          [cityNameClean, altCityName, `%${cityNameClean}%`, cityNameClean, altCityName]
+          [cityNameClean, altCityName, wordPattern, cityNameClean, altCityName]
         );
         if (pRows && pRows.length > 0) {
           portalId = pRows[0].portalid;
@@ -1314,6 +1318,9 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
       }
 
       let existingScrapedCount = 0;
+      let alreadyInProcessing = false;
+      let existingEmpId = null;
+
       if (portalId) {
         try {
           const [scrapedRows] = await connection.query(
@@ -1324,13 +1331,26 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
         } catch (e) {
           existingScrapedCount = 0;
         }
+
+        try {
+          const [spRows] = await connection.query(
+            `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING WHERE PORTALID = ? LIMIT 1`,
+            [portalId]
+          );
+          if (spRows && spRows.length > 0) {
+            alreadyInProcessing = true;
+            existingEmpId = spRows[0].EMP_ID;
+          }
+        } catch (e) { }
       }
 
       const estimatedBusinesses = item.approx_businesses || dbContentCount || 5000;
       const remainingBusinesses = Math.max(0, estimatedBusinesses - existingScrapedCount);
 
       let validationStatus = 'New';
-      if (remainingBusinesses === 0 && existingScrapedCount > 0) {
+      if (alreadyInProcessing) {
+        validationStatus = 'Already in Processing';
+      } else if (remainingBusinesses === 0 && existingScrapedCount > 0) {
         validationStatus = 'Completed';
       } else if (existingScrapedCount > 0 && remainingBusinesses > 0) {
         validationStatus = 'Partial';
@@ -1345,7 +1365,9 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
         existing_businesses: existingScrapedCount,
         remaining_businesses: remainingBusinesses > 0 ? remainingBusinesses : estimatedBusinesses,
         portal_id: portalId,
-        status: validationStatus
+        status: validationStatus,
+        already_in_processing: alreadyInProcessing,
+        existing_emp_id: existingEmpId
       });
     }
 
@@ -1358,7 +1380,9 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
       existing_businesses: 0,
       remaining_businesses: item.approx_businesses || 5000,
       portal_id: item.portal_id || (10000 + (idx * 153) % 85000),
-      status: 'New'
+      status: 'New',
+      already_in_processing: false,
+      existing_emp_id: null
     }));
   } finally {
     if (connection) await connection.end();
@@ -2737,13 +2761,10 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
     logReallocation(`[PORTAL VALIDATION] Validation complete: ${completedCount} completed locations skipped, ${activeCount} locations updated/registered in Portal DB.`);
 
     // Automatically populate SCRAPPER_PROCESSING table with prompt portals using logged-in user's EMP_ID
-    const loggedEmpId = req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
-    await addPortalsToScrapperProcessing(validated, loggedEmpId);
-
     // Generated batch items computed for response (not assigned to cityQueue to avoid auto-starting runners/executables)
     const generatedQueue = buildQueueAndBatchesFromValidation(validated, bSize, req.clientId);
 
-    logReallocation(`[WORKFLOW DISCOVERY] Prompt processed successfully. Added ${validated.length} portals to SCRAPPER_PROCESSING table for Employee ID ${loggedEmpId}.`);
+    logReallocation(`[WORKFLOW DISCOVERY] Prompt processed successfully. Discovered ${validated.length} location portal records.`);
 
     res.json({
       success: true,
@@ -2758,6 +2779,67 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
   } catch (err) {
     console.error('Error in full-workflow orchestration:', err.message);
     res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Endpoint to manually add selected portals to SCRAPPER_PROCESSING (with duplicate checking)
+app.post('/api/orchestrate/add-to-processing', async (req, res) => {
+  const { items } = req.body || {};
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'No portals selected to add to SCRAPPER_PROCESSING.' });
+  }
+
+  const empId = req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
+  let addedCount = 0;
+  let blockedItems = [];
+  let connection;
+
+  try {
+    connection = await mysql.createConnection(dbConfig);
+    for (const item of items) {
+      const portalId = String(item.portal_id || item.portalid || '0');
+      const portalName = item.city || item.portal_name || 'Location';
+
+      const [existing] = await connection.query(
+        `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING WHERE PORTALID = ? LIMIT 1`,
+        [portalId]
+      );
+
+      if (existing && existing.length > 0) {
+        blockedItems.push({ portal_id: portalId, city: portalName, emp_id: existing[0].EMP_ID });
+      } else {
+        await connection.query(
+          `INSERT INTO SCRAPPER_PROCESSING (EMP_ID, PORTALNAME, PORTALID, STATUS, INSRT_DTM, UPDATE_DTM)
+           VALUES (?, ?, ?, 'PENDING', NOW(), NOW())`,
+          [empId, portalName, portalId]
+        );
+        addedCount++;
+      }
+    }
+
+    if (blockedItems.length > 0 && addedCount === 0) {
+      const blockedNames = blockedItems.map(b => `'${b.city}' (ID: ${b.portal_id})`).join(', ');
+      return res.status(400).json({
+        success: false,
+        error: `Portal(s) ${blockedNames} already in processing. Please contact admin.`
+      });
+    }
+
+    let msg = `Successfully added ${addedCount} portal(s) to SCRAPPER_PROCESSING for Employee ID ${empId}.`;
+    if (blockedItems.length > 0) {
+      const blockedNames = blockedItems.map(b => `'${b.city}' (ID: ${b.portal_id})`).join(', ');
+      msg += ` Note: ${blockedItems.length} portal(s) (${blockedNames}) already exist in processing and were skipped (Contact admin).`;
+    }
+
+    logReallocation(`[SCRAPPER_PROCESSING MANUAL ADD] Added ${addedCount} portals, blocked ${blockedItems.length} duplicate portals for Employee ID ${empId}.`);
+    res.json({ success: true, addedCount, blockedCount: blockedItems.length, message: msg, blockedItems });
+
+  } catch (err) {
+    console.error('[ADD TO PROCESSING ERROR]', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (connection) await connection.end().catch(() => { });
   }
 });
 

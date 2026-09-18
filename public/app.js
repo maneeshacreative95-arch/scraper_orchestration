@@ -1143,20 +1143,103 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!results || results.length === 0 || !validationResultsPanel || !validationResultsTableBody) return;
     validationResultsPanel.classList.remove('hidden');
     validationResultsTableBody.innerHTML = '';
-    
+
+    const selectAllCb = document.getElementById('selectAllPortalsCheckbox');
+    if (selectAllCb) selectAllCb.checked = false;
+
     results.forEach(res => {
-      const badgeClass = res.status === 'Completed' ? 'badge-completed' : (res.status === 'Partial' ? 'badge-running' : 'badge-pending');
+      const isAlreadyInProcessing = res.already_in_processing;
+      let badgeClass = 'badge-pending';
+      let statusText = res.status;
+
+      if (isAlreadyInProcessing) {
+        badgeClass = 'badge-failed';
+        statusText = 'Already in Processing';
+      } else if (res.status === 'Completed') {
+        badgeClass = 'badge-completed';
+      } else if (res.status === 'Partial') {
+        badgeClass = 'badge-running';
+      }
+
+      const checkboxHtml = isAlreadyInProcessing
+        ? `<input type="checkbox" disabled title="Portal '${res.city}' (ID: ${res.portal_id}) is already in SCRAPPER_PROCESSING. Please contact admin.">`
+        : `<input type="checkbox" class="portal-select-checkbox" data-portalid="${res.portal_id}" data-city="${res.city}" data-state="${res.state}">`;
+
       const tr = document.createElement('tr');
+      if (isAlreadyInProcessing) {
+        tr.style.opacity = '0.75';
+      }
+
       tr.innerHTML = `
+        <td style="text-align: center;">${checkboxHtml}</td>
         <td><strong>${res.state}</strong></td>
         <td>${res.city}</td>
         <td>${(res.estimated_businesses || 0).toLocaleString()}</td>
         <td style="color: var(--accent-color); font-weight: 500;">${(res.existing_businesses || 0).toLocaleString()}</td>
         <td style="color: var(--color-success); font-weight: 600;">${(res.remaining_businesses || 0).toLocaleString()}</td>
         <td><code>${res.portal_id || '-'}</code></td>
-        <td><span class="badge ${badgeClass}">${res.status}</span></td>
+        <td><span class="badge ${badgeClass}" ${isAlreadyInProcessing ? 'title="Already in SCRAPPER_PROCESSING. Please contact admin."' : ''}>${statusText}</span></td>
       `;
       validationResultsTableBody.appendChild(tr);
+    });
+  }
+
+  // Select All Checkbox Handler
+  const selectAllPortalsCheckbox = document.getElementById('selectAllPortalsCheckbox');
+  if (selectAllPortalsCheckbox) {
+    selectAllPortalsCheckbox.addEventListener('change', (e) => {
+      const isChecked = e.target.checked;
+      const checkboxes = document.querySelectorAll('.portal-select-checkbox');
+      checkboxes.forEach(cb => {
+        if (!cb.disabled) cb.checked = isChecked;
+      });
+    });
+  }
+
+  // Add Selected Portals to SCRAPPER_PROCESSING Button Handler
+  const addSelectedToProcessingBtn = document.getElementById('addSelectedToProcessingBtn');
+  if (addSelectedToProcessingBtn) {
+    addSelectedToProcessingBtn.addEventListener('click', async () => {
+      const checkedBoxes = document.querySelectorAll('.portal-select-checkbox:checked');
+      if (checkedBoxes.length === 0) {
+        return alert('Please select at least one portal checkbox to add to SCRAPPER_PROCESSING.');
+      }
+
+      const selectedItems = Array.from(checkedBoxes).map(cb => ({
+        portal_id: cb.getAttribute('data-portalid'),
+        city: cb.getAttribute('data-city'),
+        state: cb.getAttribute('data-state')
+      }));
+
+      addSelectedToProcessingBtn.disabled = true;
+      addSelectedToProcessingBtn.textContent = 'Adding to Processing...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/orchestrate/add-to-processing`, {
+          method: 'POST',
+          headers: { ...getClientHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: selectedItems })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          alert(data.message);
+          const promptInput = document.getElementById('scrapingPromptInput');
+          if (promptInput && promptInput.value.trim() && orchestratePromptBtn) {
+            orchestratePromptBtn.click();
+          } else {
+            await fetchStatus();
+          }
+        } else {
+          alert(`Error adding to processing: ${data.error || 'Failed to add selected portals.'}`);
+        }
+      } catch (err) {
+        alert(`Error communicating with server: ${err.message}`);
+        console.error(err);
+      } finally {
+        addSelectedToProcessingBtn.disabled = false;
+        addSelectedToProcessingBtn.textContent = 'Add Selected Portals to SCRAPPER_PROCESSING';
+      }
     });
   }
 
