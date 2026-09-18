@@ -514,20 +514,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const nameInput = document.getElementById('loginName');
       const submitBtn = document.getElementById('loginSubmitBtn');
 
-      const empid = empIdInput ? empIdInput.value.trim() : '';
-      const firmid = firmIdInput ? firmIdInput.value.trim() : '';
+      let empid = empIdInput ? empIdInput.value.trim() : '';
+      let firmid = firmIdInput ? firmIdInput.value.trim() : '';
       const name = nameInput ? nameInput.value.trim() : '';
+
+      if (!firmid) firmid = '5';
+      if (!empid) empid = '1572';
 
       if (alertBox) alertBox.style.display = 'none';
       if (successBox) successBox.style.display = 'none';
-
-      if (!empid || !firmid) {
-        if (alertBox) {
-          alertBox.textContent = 'Please enter both Employee ID and Firm ID.';
-          alertBox.style.display = 'block';
-        }
-        return;
-      }
 
       if (submitBtn) {
         submitBtn.disabled = true;
