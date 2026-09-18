@@ -507,14 +507,15 @@ function releaseRunnerExecutionLock(runnerId) {
 async function dispatchNextQueuedBatch(runnerId) {
   releaseRunnerExecutionLock(runnerId);
 
-  // Find next Queued or Pending batch
-  const queuedBatch = cityQueue.find(c => c.status === 'Queued' && (c.assigned_agent === runnerId || c.assigned_agent === 'Manisha (Local PC)')) ||
-    cityQueue.find(c => c.status === 'Queued') ||
-    cityQueue.find(c => c.status === 'Pending');
+  const regItem = runnerRegistry.find(r => r.runner_id === runnerId || r.agent_name.includes('Manisha'));
+  const rClientId = regItem?.client_id || 1572;
+
+  // Find next Queued or Pending batch specifically for this client
+  const queuedBatch = cityQueue.find(c => (c.assigned_agent === runnerId || c.assigned_agent === regItem?.agent_name) && (c.status === 'Queued' || c.status === 'Pending')) ||
+    cityQueue.find(c => (c.status === 'Queued' || c.status === 'Pending') && (c.client_id || 1572) === rClientId);
 
   if (!queuedBatch) return;
 
-  const regItem = runnerRegistry.find(r => r.runner_id === runnerId || r.agent_name.includes('Manisha'));
   const targetAgent = agents.find(a => a.agent_id === runnerId || a.agent_name === regItem?.agent_name) || agents.find(a => a.status === 'Idle');
 
   if (regItem && targetAgent && !runnerExecutionLocks.has(regItem.runner_id)) {
@@ -2994,14 +2995,16 @@ app.post('/api/runners/start', async (req, res) => {
     wsRunner.last_heartbeat = new Date();
   }
 
+  const runnerClientId = runner.client_id || 1572;
   const targetCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && (c.status === 'Queued' || c.status === 'Pending'))
-    || cityQueue.find(c => c.status === 'Queued' || c.status === 'Pending');
+    || cityQueue.find(c => (c.status === 'Queued' || c.status === 'Pending') && (c.client_id || 1572) === runnerClientId);
 
   if (targetCity) {
     runnerExecutionLocks.delete(runner.runner_id);
     await triggerScraperRun(targetCity, runner);
     res.json({ success: true, message: `Started execution for ${targetCity.city_name} on runner ${runner.agent_name}` });
   } else {
+    // If no batches exist in Orchestrator cityQueue for this client, trigger standalone DB task processing from SCRAPPER_PROCESSING
     wsConnectedRunners.forEach((info, id) => {
       if (id === runner.runner_id || info.runner_name === runner.agent_name || (runner.agent_name && runner.agent_name.includes(info.runner_name))) {
         if (info.ws && info.ws.readyState === 1) {
@@ -3009,7 +3012,7 @@ app.post('/api/runners/start', async (req, res) => {
         }
       }
     });
-    res.json({ success: true, message: `Runner ${runner.agent_name} signal sent.` });
+    res.json({ success: true, message: `Triggered database task run for ${runner.agent_name}.` });
   }
 });
 
