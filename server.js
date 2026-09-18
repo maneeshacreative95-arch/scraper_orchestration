@@ -956,7 +956,7 @@ async function getValidGroqChatModel(key, preferredModel) {
   return 'openai/gpt-oss-20b';
 }
 
-async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = null) {
+async function getActiveApiKey(targetUserId, requestedProvider = null, targetFirmId = null) {
   const userId = parseInt(targetUserId || defaultScraperConfig.user_id, 10);
   const firmId = parseInt(targetFirmId || defaultScraperConfig.firm_id || 5, 10);
   try {
@@ -969,10 +969,14 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
     ).catch(() => []);
 
     if (rows && rows.length > 0) {
-      const match = rows.find(r => r.LLM_PROVIDER === provider && r.STATUS === 'ACTIVE') ||
-        rows.find(r => r.LLM_PROVIDER === provider) ||
-        rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
-        rows[0];
+      let match = null;
+      if (requestedProvider) {
+        match = rows.find(r => r.LLM_PROVIDER === requestedProvider && r.STATUS === 'ACTIVE') ||
+                rows.find(r => r.LLM_PROVIDER === requestedProvider);
+      }
+      if (!match) {
+        match = rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') || rows[0];
+      }
 
       if (match) {
         let selectedModel = match.MODEL_NAME || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
@@ -985,7 +989,7 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
           exists: true,
           key: match.API_KEY || process.env.GROQ_API_KEY || '',
           model: selectedModel,
-          provider: match.LLM_PROVIDER || provider,
+          provider: match.LLM_PROVIDER || requestedProvider || 'GROQ',
           status: match.STATUS || 'INACTIVE',
           isActive: isActive,
           url: match.MODEL_URL
@@ -1001,7 +1005,7 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
       exists: true,
       key: process.env.GROQ_API_KEY,
       model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
-      provider: provider,
+      provider: requestedProvider || 'GROQ',
       status: 'ACTIVE',
       isActive: true
     };
@@ -1011,7 +1015,7 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
     exists: false,
     key: '',
     model: '',
-    provider: provider,
+    provider: requestedProvider || 'GROQ',
     status: 'INACTIVE',
     isActive: false,
     message: 'No API configured. Please add one in MyBlocks API Key Manager.'
@@ -1060,7 +1064,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
   }
 
   // 2. LLM Discovery: Call LLM/Gemini if prompt term not found in portal database
-  const activeKeyObj = await getActiveApiKey(targetUserId, 'GROQ', targetFirmId);
+  const activeKeyObj = await getActiveApiKey(targetUserId, null, targetFirmId);
 
   if (!activeKeyObj.exists || !activeKeyObj.key) {
     const noKeyMsg = 'No API configured. Please add one in MyBlocks API Key Manager.';
@@ -1075,56 +1079,92 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
   }
 
   const key = activeKeyObj.key;
-  let modelName = await getValidGroqChatModel(key, activeKeyObj.model);
-  const provider = activeKeyObj.provider || 'GROQ';
+  const provider = (activeKeyObj.provider || 'GROQ').toUpperCase();
+  let modelName = activeKeyObj.model;
 
-  let url = 'https://api.groq.com/openai/v1/chat/completions';
-  if (provider === 'OPENAI') url = 'https://api.openai.com/v1/chat/completions';
-  if (provider === 'OPENROUTER') url = 'https://openrouter.ai/api/v1/chat/completions';
-  if (provider === 'DEEPSEEK') url = 'https://api.deepseek.com/v1/chat/completions';
-
-  const executeCall = async (targetModel) => {
-    return await fetch(url, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: targetModel,
-        temperature: 0.3,
-        max_tokens: 2500,
-        messages: [
-          { role: 'system', content: 'You are a location and market intelligence AI for India. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses". Never use ellipses (...), truncated values, comments, or prose.' },
-          { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]` }
-        ]
-      }),
-      signal: AbortSignal.timeout(12000)
-    });
-  };
+  logReallocation(`[LLM DISCOVERY] Using active Provider '${provider}', Model '${modelName}' from DB API_KEY_MANAGER.`);
 
   try {
-    let llmRes = await executeCall(modelName);
+    let textOut = '';
 
-    if (!llmRes.ok && (llmRes.status === 404 || llmRes.status === 400)) {
-      const errText = await llmRes.text();
-      let parsedErr;
-      try { parsedErr = JSON.parse(errText); } catch (e) { }
+    if (provider === 'GEMINI') {
+      let gModel = (modelName || 'gemini-1.5-flash').toLowerCase();
+      if (gModel === 'gemini-1.5' || gModel === 'gemini-1.5-flash') gModel = 'gemini-1.5-flash';
+      else if (gModel === 'gemini-2.0' || gModel === 'gemini-2.0-flash') gModel = 'gemini-2.0-flash';
+      else if (gModel.includes('3.7')) gModel = 'gemini-2.5-flash';
 
-      const isModelError = llmRes.status === 404 ||
-        (parsedErr && parsedErr.error && (parsedErr.error.code === 'model_not_found' || (parsedErr.error.message && parsedErr.error.message.toLowerCase().includes('model'))));
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key}`;
+      const geminiRes = await fetch(geminiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `You are a location and market intelligence AI for India. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses". Never use ellipses (...), truncated values, comments, or prose. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]`
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.3,
+            responseMimeType: 'application/json'
+          }
+        }),
+        signal: AbortSignal.timeout(12000)
+      });
 
-      if (isModelError) {
-        logReallocation(`[LLM DISCOVERY] Model '${modelName}' unavailable (404 model_not_found). Auto-discovering valid chat model for account...`);
+      if (geminiRes.ok) {
+        const gData = await geminiRes.json();
+        textOut = gData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } else {
+        const gErr = await geminiRes.text();
+        console.error('[GEMINI API Error]', geminiRes.status, gErr);
+        throw new Error(`Gemini API Error (${geminiRes.status}): ${gErr}`);
+      }
+    } else {
+      if (provider === 'GROQ') modelName = await getValidGroqChatModel(key, modelName);
+
+      let url = 'https://api.groq.com/openai/v1/chat/completions';
+      if (provider === 'OPENAI') url = 'https://api.openai.com/v1/chat/completions';
+      if (provider === 'OPENROUTER') url = 'https://openrouter.ai/api/v1/chat/completions';
+      if (provider === 'DEEPSEEK') url = 'https://api.deepseek.com/v1/chat/completions';
+
+      const executeCall = async (targetModel) => {
+        return await fetch(url, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: targetModel,
+            temperature: 0.3,
+            max_tokens: 2500,
+            messages: [
+              { role: 'system', content: 'You are a location and market intelligence AI for India. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses". Never use ellipses (...), truncated values, comments, or prose.' },
+              { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]` }
+            ]
+          }),
+          signal: AbortSignal.timeout(12000)
+        });
+      };
+
+      let llmRes = await executeCall(modelName);
+
+      if (!llmRes.ok && (llmRes.status === 404 || llmRes.status === 400) && provider === 'GROQ') {
         const fallbackModel = await getValidGroqChatModel(key, null);
         if (fallbackModel && fallbackModel !== modelName) {
           modelName = fallbackModel;
-          logReallocation(`[LLM DISCOVERY] Automatically switched to active chat model '${modelName}'. Retrying discovery request...`);
           llmRes = await executeCall(modelName);
         }
       }
+
+      if (llmRes.ok) {
+        const data = await llmRes.json();
+        textOut = data.choices?.[0]?.message?.content || '';
+      } else {
+        const errText = await llmRes.text();
+        console.error('[LLM API Error]', llmRes.status, errText);
+        throw new Error(`${provider} API Error (${llmRes.status}): ${errText}`);
+      }
     }
 
-    if (llmRes.ok) {
-      const data = await llmRes.json();
-      const textOut = data.choices?.[0]?.message?.content || '';
+    if (textOut) {
       const matchJson = textOut.match(/\[[\s\S]*\]/);
       if (matchJson) {
         let cleanedJson = matchJson[0]
@@ -1163,127 +1203,9 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
           });
         }
       }
-    } else {
-      const errText = await llmRes.text();
-      console.error('[LLM API Error]', llmRes.status, errText);
-
-      let parsedErr;
-      try { parsedErr = JSON.parse(errText); } catch (e) { }
-
-      let userFriendlyMsg = `Groq API Error (${llmRes.status}): ${parsedErr?.error?.message || errText}`;
-      logReallocation(`[LLM DISCOVERY ERROR] ${userFriendlyMsg}`);
-      throw new Error(userFriendlyMsg);
     }
   } catch (llmErr) {
     console.error('[LLM DISCOVERY] Live API query error:', llmErr.message);
-  }
-  const text = (regionCoverage || 'India').toLowerCase();
-  let targetStates = [];
-
-  const cityStateDict = {
-    'bhopal': 'Madhya Pradesh', 'indore': 'Madhya Pradesh', 'gwalior': 'Madhya Pradesh', 'jabalpur': 'Madhya Pradesh',
-    'bangalore': 'Karnataka', 'bengaluru': 'Karnataka', 'mumbai': 'Maharashtra', 'pune': 'Maharashtra',
-    'delhi': 'Delhi', 'new delhi': 'Delhi', 'noida': 'Uttar Pradesh', 'gurgaon': 'Haryana', 'gurugram': 'Haryana',
-    'hyderabad': 'Telangana', 'chennai': 'Tamil Nadu', 'kochi': 'Kerala', 'trivandrum': 'Kerala',
-    'jaipur': 'Rajasthan', 'lucknow': 'Uttar Pradesh', 'ahmedabad': 'Gujarat', 'kolkata': 'West Bengal',
-    'coimbatore': 'Tamil Nadu', 'nagpur': 'Maharashtra', 'patna': 'Bihar', 'chandigarh': 'Punjab'
-  };
-
-  for (const [cName, sName] of Object.entries(cityStateDict)) {
-    if (text.includes(cName)) {
-      if (!targetStates.includes(sName)) targetStates.push(sName);
-    }
-  }
-
-  if (text.includes('south india')) {
-    targetStates.push('Karnataka', 'Tamil Nadu', 'Telangana', 'Kerala', 'Andhra Pradesh');
-  } else if (text.includes('north india')) {
-    targetStates.push('Delhi', 'Haryana', 'Punjab', 'Uttar Pradesh', 'Rajasthan', 'Chandigarh', 'Madhya Pradesh');
-  } else if (text.includes('entire india') || text.includes('across india') || text.includes('all india') || text.includes('india')) {
-    targetStates.push('Karnataka', 'Tamil Nadu', 'Telangana', 'Maharashtra', 'Delhi', 'Gujarat', 'Kerala', 'Andhra Pradesh', 'West Bengal', 'Haryana', 'Punjab', 'Rajasthan', 'Uttar Pradesh', 'Madhya Pradesh');
-  } else {
-    const knownStates = [
-      'Karnataka', 'Tamil Nadu', 'Telangana', 'Kerala', 'Andhra Pradesh',
-      'Maharashtra', 'Gujarat', 'Delhi', 'Haryana', 'Punjab', 'West Bengal',
-      'Rajasthan', 'Uttar Pradesh', 'Goa', 'Bihar', 'Odisha', 'Madhya Pradesh'
-    ];
-    for (const st of knownStates) {
-      if (text.includes(st.toLowerCase()) && !targetStates.includes(st)) {
-        targetStates.push(st);
-      }
-    }
-    if (targetStates.length === 0) {
-      targetStates = ['Madhya Pradesh', 'Karnataka', 'Delhi', 'Maharashtra', 'Tamil Nadu'];
-    }
-  }
-
-  let connection;
-  let discoveredList = [];
-
-  try {
-    connection = await mysql.createConnection(dbConfig);
-    const placeholders = targetStates.map(() => '?').join(',');
-    const [rows] = await connection.query(
-      `SELECT portalid, portalname, state, contentcount 
-       FROM portal 
-       WHERE status = 'ACTIVE' AND state IN (${placeholders}) AND portalname != ''
-       ORDER BY CAST(contentcount AS UNSIGNED) DESC, portalid ASC`,
-      targetStates
-    );
-
-    const top = (topic || 'General').toLowerCase();
-    let topicMultiplier = 1.0;
-    if (top.includes('healthcare') || top.includes('hospital') || top.includes('doctor')) topicMultiplier = 0.45;
-    else if (top.includes('tech') || top.includes('software') || top.includes('ai') || top.includes('startup')) topicMultiplier = 0.65;
-    else if (top.includes('hotel') || top.includes('restaurant') || top.includes('hospitality')) topicMultiplier = 0.50;
-    else if (top.includes('education') || top.includes('school') || top.includes('college')) topicMultiplier = 0.35;
-    else if (top.includes('textile') || top.includes('manufacturing')) topicMultiplier = 0.40;
-
-    discoveredList = rows.map(r => {
-      const parsedContent = parseInt(r.contentcount, 10);
-      let baseDbCount = (isNaN(parsedContent) || parsedContent <= 0) ? 5000 : parsedContent;
-
-      // Dynamic realistic variation per city based on tier and portal ID hash
-      const pId = parseInt(r.portalid, 10) || 1000;
-      const cName = r.portalname.toLowerCase();
-      const hash = ((pId * 31) + (cName.length * 17)) % 29;
-
-      if (baseDbCount === 5000 || baseDbCount === 0) {
-        if (cName.includes('delhi') || cName.includes('mumbai') || cName.includes('bangalore') || cName.includes('chennai') || cName.includes('hyderabad') || cName.includes('kolkata')) {
-          baseDbCount = 45000 + (hash * 1450);
-        } else if (cName.includes('noida') || cName.includes('gurgaon') || cName.includes('pune') || cName.includes('coimbatore') || cName.includes('kochi') || cName.includes('ahmedabad') || cName.includes('jaipur') || cName.includes('lucknow')) {
-          baseDbCount = 18000 + (hash * 920);
-        } else if (cName.includes('so') || cName.includes('east') || cName.includes('west') || cName.includes('north') || cName.includes('south') || cName.includes('bazar') || cName.includes('nagar')) {
-          baseDbCount = 4500 + (hash * 380);
-        } else {
-          baseDbCount = 8500 + (hash * 550);
-        }
-      }
-
-      let approxBusinesses = Math.round(baseDbCount * topicMultiplier);
-      if (approxBusinesses < 500) approxBusinesses = 2500 + (hash * 200);
-
-      if (targetCompaniesLimit && targetCompaniesLimit > 0) {
-        approxBusinesses = Math.min(approxBusinesses, targetCompaniesLimit);
-      }
-
-      return {
-        state: r.state.trim(),
-        city: r.portalname.trim(),
-        portal_id: r.portalid,
-        approx_businesses: approxBusinesses,
-        db_content_count: baseDbCount
-      };
-    });
-
-  } catch (err) {
-    console.error('LLM Region Discovery DB Error:', err.message);
-  } finally {
-    if (connection) await connection.end();
-  }
-
-  if (discoveredList.length > 0) {
-    return discoveredList;
   }
 
   // Fallback: If no direct match in DB and LLM call produced no results, create a dynamic single record from the search prompt
@@ -1928,7 +1850,7 @@ app.get('/api/status', async (req, res) => {
 
   const completedStatesList = [...new Set(filteredQueue.filter(c => c.status === 'Completed').map(c => c.state))];
 
-  const activeLlmConfig = await getActiveApiKey(client_id, 'GROQ', req.firmId);
+  const activeLlmConfig = await getActiveApiKey(client_id, null, req.firmId);
 
   res.json({
     backendOnline,
@@ -2222,12 +2144,12 @@ app.post('/api/scheduler/config', (req, res) => {
 app.get('/api/user-llm-config', async (req, res) => {
   const targetUserId = req.clientId || req.query.user_id || defaultScraperConfig.user_id;
   const targetFirmId = req.firmId || req.query.firm_id || defaultScraperConfig.firm_id;
-  const config = await getActiveApiKey(targetUserId, 'GROQ', targetFirmId);
+  const config = await getActiveApiKey(targetUserId, null, targetFirmId);
 
   res.json({
     user_id: targetUserId,
     exists: config.exists,
-    provider: config.provider || 'GROQ',
+    provider: config.provider || 'None',
     model: config.model || '-',
     status: config.status || 'INACTIVE',
     isActive: config.isActive,
