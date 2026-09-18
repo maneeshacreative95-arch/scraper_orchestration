@@ -1162,8 +1162,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const checkboxHtml = isAlreadyInProcessing
-        ? `<input type="checkbox" disabled style="width: 18px; height: 18px; margin: 0; cursor: not-allowed; opacity: 0.5;" title="Portal '${res.city}' (ID: ${res.portal_id}) is already in SCRAPPER_PROCESSING. Please contact admin.">`
-        : `<input type="checkbox" class="portal-select-checkbox" data-portalid="${res.portal_id}" data-city="${res.city}" data-state="${res.state}" style="width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: #3b82f6; display: inline-block; vertical-align: middle;">`;
+        ? `<input type="checkbox" disabled style="-webkit-appearance: checkbox !important; appearance: checkbox !important; width: 18px !important; height: 18px !important; margin: 0 !important; cursor: not-allowed !important; opacity: 0.5 !important; visibility: visible !important; display: inline-block !important;" title="Portal '${res.city}' (ID: ${res.portal_id}) is already in SCRAPPER_PROCESSING. Please contact admin.">`
+        : `<input type="checkbox" class="portal-select-checkbox" data-portalid="${res.portal_id}" data-city="${res.city}" data-state="${res.state}" style="-webkit-appearance: checkbox !important; appearance: checkbox !important; width: 18px !important; height: 18px !important; margin: 0 !important; cursor: pointer !important; accent-color: #3b82f6 !important; opacity: 1 !important; visibility: visible !important; display: inline-block !important; vertical-align: middle !important;">`;
 
       const tr = document.createElement('tr');
       if (isAlreadyInProcessing) {
