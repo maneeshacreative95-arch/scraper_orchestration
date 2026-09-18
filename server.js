@@ -2788,13 +2788,13 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
 
 // Endpoint to manually add selected portals to SCRAPPER_PROCESSING (with duplicate checking)
 app.post('/api/orchestrate/add-to-processing', async (req, res) => {
-  const { items } = req.body || {};
+  const { items, target_emp_id, emp_id } = req.body || {};
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'No portals selected to add to SCRAPPER_PROCESSING.' });
   }
 
-  const empId = req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
+  const empId = target_emp_id || emp_id || req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
   let addedCount = 0;
   let blockedItems = [];
   let connection;

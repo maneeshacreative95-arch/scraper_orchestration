@@ -1196,6 +1196,67 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Assign Selected Portals to Another User / Runner Handler
+  const assignToOtherUserCheckbox = document.getElementById('assignToOtherUserCheckbox');
+  const assignUserDropdownContainer = document.getElementById('assignUserDropdownContainer');
+  const assignUserSelect = document.getElementById('assignUserSelect');
+
+  async function populateAssignUserDropdown() {
+    if (!assignUserSelect) return;
+    assignUserSelect.innerHTML = '<option value="">-- Loading Agents... --</option>';
+
+    try {
+      const res = await fetch(`${API_BASE}/api/runners`, { headers: getClientHeaders() });
+      const data = await res.json();
+      const runnersList = (data && data.runners) ? data.runners : (cachedRunnersList || []);
+
+      assignUserSelect.innerHTML = '<option value="">-- Select Agent from Registry --</option>';
+
+      if (!runnersList || runnersList.length === 0) {
+        assignUserSelect.innerHTML = '<option value="">No registered agents found</option>';
+        return;
+      }
+
+      const addedEmpIds = new Set();
+      runnersList.forEach(r => {
+        let empId = r.client_id || r.emp_id;
+        if (!empId && r.runner_id && r.runner_id.startsWith('runner_')) {
+          const parts = r.runner_id.split('_');
+          if (parts[1] && !isNaN(parseInt(parts[1], 10))) {
+            empId = parseInt(parts[1], 10);
+          }
+        }
+        if (!empId) empId = 1572;
+
+        const displayName = r.agent_name || r.server_name || `Runner ${r.runner_id || ''}`;
+        const optionKey = `${empId}_${displayName}`;
+
+        if (!addedEmpIds.has(optionKey)) {
+          addedEmpIds.add(optionKey);
+          const opt = document.createElement('option');
+          opt.value = empId;
+          opt.textContent = `${displayName} [EMP ID: ${empId}]`;
+          assignUserSelect.appendChild(opt);
+        }
+      });
+    } catch (err) {
+      console.error('[AGENT REGISTRY DROPDOWN ERROR]', err);
+      assignUserSelect.innerHTML = '<option value="">Error loading agents</option>';
+    }
+  }
+
+  if (assignToOtherUserCheckbox) {
+    assignToOtherUserCheckbox.addEventListener('change', () => {
+      if (assignToOtherUserCheckbox.checked) {
+        if (assignUserDropdownContainer) assignUserDropdownContainer.style.display = 'flex';
+        populateAssignUserDropdown();
+      } else {
+        if (assignUserDropdownContainer) assignUserDropdownContainer.style.display = 'none';
+        if (assignUserSelect) assignUserSelect.value = '';
+      }
+    });
+  }
+
   // Add Selected Portals to SCRAPPER_PROCESSING Button Handler
   const addSelectedToProcessingBtn = document.getElementById('addSelectedToProcessingBtn');
   if (addSelectedToProcessingBtn) {
@@ -1203,6 +1264,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const checkedBoxes = document.querySelectorAll('.portal-select-checkbox:checked');
       if (checkedBoxes.length === 0) {
         return alert('Please select at least one portal checkbox to add to SCRAPPER_PROCESSING.');
+      }
+
+      let targetEmpId = null;
+      if (assignToOtherUserCheckbox && assignToOtherUserCheckbox.checked) {
+        targetEmpId = assignUserSelect ? assignUserSelect.value : null;
+        if (!targetEmpId) {
+          return alert('Please select an agent from the Agent Registry dropdown before adding to SCRAPPER_PROCESSING.');
+        }
       }
 
       const selectedItems = Array.from(checkedBoxes).map(cb => ({
@@ -1215,10 +1284,15 @@ document.addEventListener('DOMContentLoaded', () => {
       addSelectedToProcessingBtn.textContent = 'Adding to Processing...';
 
       try {
+        const payload = { items: selectedItems };
+        if (targetEmpId) {
+          payload.target_emp_id = targetEmpId;
+        }
+
         const res = await fetch(`${API_BASE}/api/orchestrate/add-to-processing`, {
           method: 'POST',
           headers: { ...getClientHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: selectedItems })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
 

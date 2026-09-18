@@ -176,7 +176,18 @@
                   </tbody>
                 </table>
               </div>
-              <div style="margin-top: 1rem; text-align: right;">
+              <div style="margin-top: 1.2rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; background: rgba(255, 255, 255, 0.03); padding: 12px 18px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.07);">
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                  <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 0.9rem; color: #e2e8f0; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="assignToOtherUserCheckbox" style="width: 16px; height: 16px; cursor: pointer; accent-color: #3b82f6;">
+                    <span>Assign selected city/cities to another user?</span>
+                  </label>
+                  <div id="assignUserDropdownContainer" style="display: none; align-items: center; gap: 8px;">
+                    <select id="assignUserSelect" style="background: var(--bg-dark, #1e293b); color: #f8fafc; border: 1px solid #3b82f6; border-radius: 6px; padding: 6px 12px; font-size: 0.85rem; outline: none; cursor: pointer; min-width: 240px;">
+                      <option value="">-- Select Agent from Registry --</option>
+                    </select>
+                  </div>
+                </div>
                 <button id="addSelectedToProcessingBtn" class="btn btn-primary" style="border-radius: 8px; padding: 10px 24px; font-size: 0.95rem; font-weight: 600;">Add Selected Portals to SCRAPPER_PROCESSING</button>
               </div>
             </div>
