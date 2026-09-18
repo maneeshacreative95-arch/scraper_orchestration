@@ -1280,14 +1280,13 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
         const cityNameClean = item.city.toLowerCase().trim();
         const altCityName = cityNameClean.replace('gurugram', 'gurgaon').replace('bengaluru', 'bangalore').replace('mumbai', 'bombay');
 
-        const wordPattern = `[[:<:]]${cityNameClean.replace(/[^a-z0-9]/g, '')}[[:>:]]`;
         const [pRows] = await connection.query(
           `SELECT portalid, contentcount FROM portal 
            WHERE status = 'ACTIVE' AND (type IS NULL OR type = '' OR type != 'MYBLOCKS.US') AND (
-             LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(portalname) REGEXP ?
+             LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) LIKE CONCAT(?, '%')
            )
            ORDER BY CASE WHEN LOWER(TRIM(portalname)) = ? THEN 1 WHEN LOWER(TRIM(portalname)) = ? THEN 2 ELSE 3 END, portalid ASC LIMIT 1`,
-          [cityNameClean, altCityName, wordPattern, cityNameClean, altCityName]
+          [cityNameClean, altCityName, cityNameClean, cityNameClean, altCityName]
         );
         if (pRows && pRows.length > 0) {
           portalId = pRows[0].portalid;
@@ -1318,10 +1317,7 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
           logReallocation(`[PORTAL AUTO-REGISTRATION] Auto-registered missing location '${item.city}' (${item.state}) in Portal Table with Portal ID ${newPortalId}, Type '${typeVal}', District '${districtVal}', Zipcode '${zipcodeVal}'.`);
         } catch (insertErr) {
           console.error('[PORTAL AUTO-REGISTRATION ERROR]', insertErr.message);
-          let hash = 0;
-          const s = item.city || 'Location';
-          for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash) + s.charCodeAt(i);
-          portalId = 222000 + Math.abs(hash % 50000);
+          portalId = null;
         }
       }
 
@@ -1381,13 +1377,13 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
 
   } catch (err) {
     console.error('Portal Validation DB Error:', err.message);
-    validationResults = discoveredCities.map((item, idx) => ({
+    validationResults = discoveredCities.map((item) => ({
       state: item.state,
       city: item.city,
       estimated_businesses: item.approx_businesses || 5000,
       existing_businesses: 0,
       remaining_businesses: item.approx_businesses || 5000,
-      portal_id: item.portal_id || (10000 + (idx * 153) % 85000),
+      portal_id: item.portal_id || null,
       status: 'New',
       already_in_processing: false,
       existing_emp_id: null
