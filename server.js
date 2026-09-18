@@ -1035,7 +1035,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
       const [directRows] = await dbConn.query(
         `SELECT portalid, portalname, state, contentcount 
          FROM portal 
-         WHERE status = 'ACTIVE' AND portalname != '' AND (type IS NULL OR type = '' OR type != 'MYBLOCKS.US') AND (
+         WHERE status = 'ACTIVE' AND portalname != '' AND (
            LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(state)) = ? OR LOWER(TRIM(city)) = ? OR
            LOWER(portalname) LIKE ? OR LOWER(state) LIKE ? OR LOWER(city) LIKE ?
          )
@@ -1299,7 +1299,7 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
 
         const [pRows] = await connection.query(
           `SELECT portalid, contentcount FROM portal 
-           WHERE status = 'ACTIVE' AND (type IS NULL OR type = '' OR type != 'MYBLOCKS.US') AND (
+           WHERE status = 'ACTIVE' AND (
              LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(portalname)) LIKE CONCAT(?, '%')
            )
            ORDER BY CASE WHEN LOWER(TRIM(portalname)) = ? THEN 1 WHEN LOWER(TRIM(portalname)) = ? THEN 2 ELSE 3 END, portalid ASC LIMIT 1`,
