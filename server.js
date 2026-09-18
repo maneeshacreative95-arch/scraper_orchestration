@@ -963,9 +963,9 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
     const rows = await poolQuery(
       `SELECT API_KEY, MODEL_NAME, MODEL_URL, LLM_PROVIDER, LLM_PROVIDER_TYPE, STATUS, BLOCKED, USERID, FIRMID 
        FROM API_KEY_MANAGER 
-       WHERE (USERID = ? OR (FIRMID = ? AND FIRMID IS NOT NULL)) AND BLOCKED = 'NO'
-       ORDER BY (USERID = ?) DESC, (STATUS = 'ACTIVE') DESC, ID DESC`,
-      [userId, firmId, userId]
+       WHERE BLOCKED = 'NO'
+       ORDER BY (STATUS = 'ACTIVE') DESC, (USERID = ?) DESC, (FIRMID = ?) DESC, ID DESC`,
+      [userId, firmId]
     ).catch(() => []);
 
     if (rows && rows.length > 0) {
@@ -2592,12 +2592,12 @@ app.post('/api/queue/populate-region', async (req, res) => {
   }
 });
 
-// Topic Analyzer helper
+// Dynamic Topic & Target Analyzer (Zero Hardcoded Places)
 function analyzeTopic(requestText) {
-  if (!requestText) return { industry: 'General', country: 'India', region: 'South India', state: '', targetContacts: 0, hasExplicitTarget: false };
+  if (!requestText) return { industry: 'General', country: 'India', region: '', state: '', targetContacts: 0, hasExplicitTarget: false };
   const text = requestText.toLowerCase().trim();
 
-  // 1. Extract Target Contacts count only if user explicitly typed a number in prompt
+  // 1. Extract Target Contacts count if explicitly specified
   const contactMatch = text.match(/(\d+)\s*(?:contacts|companies|targets|records|leads)/);
   const hasExplicitTarget = !!contactMatch;
   const targetContacts = contactMatch ? parseInt(contactMatch[1], 10) : 0;
@@ -2608,73 +2608,27 @@ function analyzeTopic(requestText) {
     country = 'USA';
   }
 
-  // 3. Extract Region & State
-  let region = '';
-  if (text.includes('south india')) {
-    region = 'South India';
-  } else if (text.includes('north india')) {
-    region = 'North India';
-  } else if (text.includes('entire india') || text.includes('across india') || text.includes('all india') || text.includes('india')) {
-    region = 'Entire India';
-  }
-
-  let state = '';
-  const statesList = [
-    'karnataka', 'telangana', 'tamil nadu', 'kerala', 'andhra pradesh',
-    'goa', 'maharashtra', 'gujarat', 'haryana', 'punjab', 'delhi', 'west bengal',
-    'rajasthan', 'uttar pradesh', 'bihar', 'odisha', 'madhya pradesh'
-  ];
-  for (const s of statesList) {
-    if (text.includes(s)) {
-      state = s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      break;
-    }
-  }
-
-  // If state not found directly, match known city names in prompt
-  if (!state) {
-    const cityStateDict = {
-      'bhopal': 'Madhya Pradesh', 'indore': 'Madhya Pradesh', 'gwalior': 'Madhya Pradesh', 'jabalpur': 'Madhya Pradesh',
-      'bangalore': 'Karnataka', 'bengaluru': 'Karnataka', 'mumbai': 'Maharashtra', 'pune': 'Maharashtra',
-      'delhi': 'Delhi', 'new delhi': 'Delhi', 'noida': 'Uttar Pradesh', 'gurgaon': 'Haryana', 'gurugram': 'Haryana',
-      'hyderabad': 'Telangana', 'chennai': 'Tamil Nadu', 'kochi': 'Kerala', 'trivandrum': 'Kerala',
-      'jaipur': 'Rajasthan', 'lucknow': 'Uttar Pradesh', 'ahmedabad': 'Gujarat', 'kolkata': 'West Bengal'
-    };
-    for (const [cName, sName] of Object.entries(cityStateDict)) {
-      if (text.includes(cName)) {
-        state = sName;
-        if (!region) region = sName;
-        break;
-      }
-    }
-  }
-
-  // 4. Smart Topic Extraction from free-text sentence
+  // 3. Dynamic Topic Extraction
   let industry = '';
   const matchPattern = text.match(/^run\s+(.*?)\s+(?:across|in|for)\s+(.*)/i);
   if (matchPattern && matchPattern[1]) {
     industry = matchPattern[1].trim();
   }
-
   if (!industry) {
-    const industriesList = [
-      'healthcare', 'ai startups', 'educational institutions', 'hotels', 'restaurants',
-      'textile manufacturers', 'startups', 'technology', 'software', 'retail', 'finance', 'manufacturing'
-    ];
-    for (const ind of industriesList) {
-      if (text.includes(ind)) {
-        industry = ind;
-        break;
-      }
-    }
+    industry = requestText.replace(/^run\s+/i, '').split(/\s+(across|in|for)\s+/i)[0].trim() || 'General';
   }
-
-  if (!industry) industry = requestText.replace(/^run\s+/i, '').split(/\s+(across|in)\s+/i)[0].trim() || 'General';
-
-  // Capitalize industry
   industry = industry.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
-  return { industry, country, region: region || (state ? state : 'Madhya Pradesh'), state, targetContacts, hasExplicitTarget };
+  const promptClean = requestText.trim();
+
+  return { 
+    industry, 
+    country, 
+    region: promptClean, 
+    state: promptClean, 
+    targetContacts, 
+    hasExplicitTarget 
+  };
 }
 
 // Topic-Based Auto Populator Endpoint
@@ -2760,7 +2714,7 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
 
   const { industry, region, state, targetContacts, hasExplicitTarget } = analyzeTopic(promptText);
   currentOrchestrationTopic = industry;
-  const coverageScope = state || region || (promptText.toLowerCase().includes('bhopal') ? 'Madhya Pradesh' : 'India');
+  const coverageScope = state || region || promptText.trim();
   const bSize = parseInt(req.body.batch_size, 10) || schedulerConfig.batch_size || 1000;
   const tLimit = req.body.targetLimit ? parseInt(req.body.targetLimit, 10) : (hasExplicitTarget ? targetContacts : 0);
 
