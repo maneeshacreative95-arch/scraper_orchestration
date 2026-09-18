@@ -1162,8 +1162,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const checkboxHtml = isAlreadyInProcessing
-        ? `<input type="checkbox" disabled title="Portal '${res.city}' (ID: ${res.portal_id}) is already in SCRAPPER_PROCESSING. Please contact admin.">`
-        : `<input type="checkbox" class="portal-select-checkbox" data-portalid="${res.portal_id}" data-city="${res.city}" data-state="${res.state}">`;
+        ? `<input type="checkbox" disabled style="width: 18px; height: 18px; margin: 0; cursor: not-allowed; opacity: 0.5;" title="Portal '${res.city}' (ID: ${res.portal_id}) is already in SCRAPPER_PROCESSING. Please contact admin.">`
+        : `<input type="checkbox" class="portal-select-checkbox" data-portalid="${res.portal_id}" data-city="${res.city}" data-state="${res.state}" style="width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: #3b82f6; display: inline-block; vertical-align: middle;">`;
 
       const tr = document.createElement('tr');
       if (isAlreadyInProcessing) {
@@ -1171,7 +1171,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       tr.innerHTML = `
-        <td style="text-align: center;">${checkboxHtml}</td>
+        <td style="width: 40px; text-align: center; vertical-align: middle;">${checkboxHtml}</td>
         <td><strong>${res.state}</strong></td>
         <td>${res.city}</td>
         <td>${(res.estimated_businesses || 0).toLocaleString()}</td>
