@@ -1101,7 +1101,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a location and market intelligence AI for India. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses". Never use ellipses (...), truncated values, comments, or prose. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]`
+              text: `You are a global location and market intelligence AI. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code e.g. OM for Oman, IN for India, US for USA, UK for UK, AE for UAE, JP for Japan), "district", "zipcode". Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]`
             }]
           }],
           generationConfig: {
@@ -1137,8 +1137,8 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
             temperature: 0.3,
             max_tokens: 2500,
             messages: [
-              { role: 'system', content: 'You are a location and market intelligence AI for India. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses". Never use ellipses (...), truncated values, comments, or prose.' },
-              { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Karnataka","city":"Bengaluru","approx_businesses":45000}]` }
+              { role: 'system', content: 'You are a global location and market intelligence AI. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code), "district", "zipcode". Never use ellipses (...), truncated values, comments, or prose.' },
+              { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]` }
             ]
           }),
           signal: AbortSignal.timeout(12000)
@@ -1195,11 +1195,14 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
             const rawCount = parseInt(item.approx_businesses, 10) || 5000;
             const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
             return {
-              state: item.state || 'India',
+              state: item.state || 'Location',
               city: item.city || 'Location',
               portal_id: null,
               approx_businesses: finalCount,
-              db_content_count: rawCount
+              db_content_count: rawCount,
+              country_domain: (item.country_domain || 'IN').toUpperCase().trim(),
+              district: item.district || item.city || 'Location',
+              zipcode: item.zipcode || '0'
             };
           });
         }
@@ -1300,14 +1303,19 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
           const newPortalId = currentMax + 1;
           const estCount = (item.approx_businesses || dbContentCount || 5000).toString();
 
+          const countryCode = (item.country_domain || 'IN').toUpperCase().trim();
+          const typeVal = `MYBLOCKS.${countryCode}`;
+          const districtVal = item.district ? item.district.trim() : item.city.trim();
+          const zipcodeVal = item.zipcode ? item.zipcode.trim() : '0';
+
           await connection.query(
-            `INSERT INTO portal (portalid, portalname, state, city, status, contentcount, INSRT_DTM)
-             VALUES (?, ?, ?, ?, 'ACTIVE', ?, NOW())`,
-            [newPortalId, item.city.trim(), item.state.trim(), item.city.trim(), estCount]
+            `INSERT INTO portal (portalid, portalname, state, city, district, zipcode, type, status, contentcount, INSRT_DTM, UPDATE_DTM)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, NOW(), NOW())`,
+            [newPortalId, item.city.trim(), item.state.trim(), item.city.trim(), districtVal, zipcodeVal, typeVal, estCount]
           );
 
           portalId = newPortalId;
-          logReallocation(`[PORTAL AUTO-REGISTRATION] Auto-registered missing location '${item.city}' (${item.state}) in Portal Table in TRN DB with Portal ID ${newPortalId}.`);
+          logReallocation(`[PORTAL AUTO-REGISTRATION] Auto-registered missing location '${item.city}' (${item.state}) in Portal Table with Portal ID ${newPortalId}, Type '${typeVal}', District '${districtVal}', Zipcode '${zipcodeVal}'.`);
         } catch (insertErr) {
           console.error('[PORTAL AUTO-REGISTRATION ERROR]', insertErr.message);
           let hash = 0;
