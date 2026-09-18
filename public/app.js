@@ -509,19 +509,21 @@ document.addEventListener('DOMContentLoaded', () => {
   if (loginForm) {
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const usernameInput = document.getElementById('loginUsername');
-      const passwordInput = document.getElementById('loginPassword');
+      const empIdInput = document.getElementById('loginEmpId') || document.getElementById('loginUsername');
+      const firmIdInput = document.getElementById('loginFirmId');
+      const nameInput = document.getElementById('loginName');
       const submitBtn = document.getElementById('loginSubmitBtn');
 
-      const username = usernameInput ? usernameInput.value.trim() : '';
-      const password = passwordInput ? passwordInput.value.trim() : '';
+      const empid = empIdInput ? empIdInput.value.trim() : '';
+      const firmid = firmIdInput ? firmIdInput.value.trim() : '';
+      const name = nameInput ? nameInput.value.trim() : '';
 
       if (alertBox) alertBox.style.display = 'none';
       if (successBox) successBox.style.display = 'none';
 
-      if (!username || !password) {
+      if (!empid || !firmid) {
         if (alertBox) {
-          alertBox.textContent = 'Please enter both username and password.';
+          alertBox.textContent = 'Please enter both Employee ID and Firm ID.';
           alertBox.style.display = 'block';
         }
         return;
@@ -536,11 +538,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch(`${API_BASE}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify({ empid, firmid, name, username: empid })
         });
         const data = await res.json();
 
         if (res.ok && data.success) {
+          const cookieDays = 30;
+          const maxAgeStr = `; path=/; max-age=${cookieDays * 86400}`;
+          
+          document.cookie = `userid=${data.client_id}${maxAgeStr}`;
+          document.cookie = `user_id=${data.client_id}${maxAgeStr}`;
+          document.cookie = `client_id=${data.client_id}${maxAgeStr}`;
+          document.cookie = `empid=${data.empid || data.client_id}${maxAgeStr}`;
+          document.cookie = `firmid=${data.firm_id}${maxAgeStr}`;
+          document.cookie = `firm_id=${data.firm_id}${maxAgeStr}`;
+          document.cookie = `FIRMID=${data.firm_id}${maxAgeStr}`;
+
           localStorage.setItem('orchestrator_session_token', data.token);
           localStorage.setItem('orchestrator_session_data', JSON.stringify(data));
 

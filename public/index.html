@@ -785,13 +785,18 @@
       <!-- Login Form -->
       <form id="clientLoginForm" style="display: flex; flex-direction: column; gap: 16px;">
         <div>
-          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Username</label>
-          <input type="text" id="loginUsername" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Enter username" required autocomplete="username">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Employee ID (Emp ID)</label>
+          <input type="text" id="loginEmpId" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Enter Employee ID (e.g. 1572)" required autocomplete="username">
         </div>
 
         <div>
-          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Password</label>
-          <input type="password" id="loginPassword" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Enter password" required autocomplete="current-password">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">Firm ID</label>
+          <input type="text" id="loginFirmId" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Enter Firm ID (e.g. 5)" required>
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 6px;">User Name (Optional)</label>
+          <input type="text" id="loginName" class="input-style" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem;" placeholder="Enter full name / display name">
         </div>
 
         <button type="submit" id="loginSubmitBtn" class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 1rem; font-weight: 600; border-radius: 8px; margin-top: 8px;">Log In</button>

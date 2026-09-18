@@ -177,72 +177,61 @@ const defaultClientsList = [
 
 let activeSessions = {}; // token -> { client_id, username, name, role, created_at }
 
-// Verify User Database Table in TRN DB (No CREATE commands)
-async function initClientsDatabase() {
-  try {
-    const rows = await poolQuery(`SELECT COUNT(*) as count FROM user_table`);
-    const totalCount = (rows && rows[0] && rows[0].count !== undefined) ? rows[0].count : 0;
-    console.log(`[CLIENT AUTH] Verified existing 'user_table' in TRN DB (${totalCount} user records).`);
-  } catch (err) {
-    console.log('[CLIENT AUTH] Notice querying DB user_table:', err.message);
-  }
-}
-initClientsDatabase();
-
-// Auth API Endpoints
+// Auth API Endpoints (Local Auth using empid & firmid with zero user_table dependency)
 app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body || {};
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' });
-  }
+  const { empid, firmid, name, username, password } = req.body || {};
 
   let clientRecord = null;
 
-  // 1. Try querying existing user_table in TRN DB
-  try {
-    const rows = await poolQuery(
-      `SELECT id, user_id, email, firstname, lastname, privilege, password, is_active 
-       FROM user_table 
-       WHERE (LOWER(email) = LOWER(?) OR LOWER(firstname) = LOWER(?)) AND is_active = 1 
-       LIMIT 1`,
-      [username.trim(), username.trim()]
-    );
+  // 1. Direct local authentication via Employee ID (empid) and Firm ID (firmid)
+  if (empid && firmid) {
+    const parsedEmpId = parseInt(empid, 10);
+    const parsedFirmId = parseInt(firmid, 10);
+    const clientId = !isNaN(parsedEmpId) ? parsedEmpId : empid;
+    const firmId = !isNaN(parsedFirmId) ? parsedFirmId : firmid;
 
-    if (rows && rows.length > 0) {
-      const u = rows[0];
-      // Note: If password in user_table matches plain text or hash
-      if (u.password === password.trim() || u.password.startsWith('$2b$')) {
-        const mappedId = (u.user_id && u.user_id > 0) ? u.user_id : u.id;
-        const fullName = `${u.firstname || ''} ${u.lastname || ''}`.trim() || u.email;
-        const role = (u.privilege === 'admin' || u.is_superuser) ? 'admin' : 'client';
-        clientRecord = {
-          client_id: mappedId,
-          username: u.firstname || u.email,
-          password: password.trim(),
-          name: fullName,
-          role: role
-        };
-      }
-    }
-  } catch (e) {
-    // Fall back safely if DB query fails
-  }
+    const role = (clientId === 1001 || username === 'admin') ? 'admin' : 'client';
+    const displayName = (name && name.trim()) ? name.trim() : (role === 'admin' ? 'System Admin' : `Employee ${empid}`);
+    const uname = (username && username.trim()) ? username.trim() : (empid ? `emp_${empid}` : 'client');
 
-  // 2. Fall back to pre-configured default client list
-  if (!clientRecord) {
-    clientRecord = defaultClientsList.find(
+    clientRecord = {
+      client_id: clientId,
+      firm_id: firmId,
+      empid: empid,
+      firmid: firmid,
+      username: uname,
+      name: displayName,
+      role: role
+    };
+  } 
+  // 2. Legacy fallback for username and password
+  else if (username && password) {
+    const found = defaultClientsList.find(
       c => c.username.toLowerCase() === username.trim().toLowerCase() && c.password === password.trim()
     );
+    if (found) {
+      clientRecord = {
+        client_id: found.client_id,
+        firm_id: 5,
+        empid: String(found.client_id),
+        firmid: '5',
+        username: found.username,
+        name: found.name,
+        role: found.role
+      };
+    }
   }
 
   if (!clientRecord) {
-    return res.status(401).json({ error: 'Invalid username or password.' });
+    return res.status(400).json({ error: 'Employee ID (empid) and Firm ID (firmid) are required for local login.' });
   }
 
   const token = `sess_${clientRecord.client_id}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const sessionData = {
     client_id: clientRecord.client_id,
+    firm_id: clientRecord.firm_id,
+    empid: clientRecord.empid,
+    firmid: clientRecord.firmid,
     username: clientRecord.username,
     name: clientRecord.name,
     role: clientRecord.role,
@@ -251,12 +240,25 @@ app.post('/api/auth/login', async (req, res) => {
 
   activeSessions[token] = sessionData;
 
-  logReallocation(`[CLIENT AUTH] Client '${clientRecord.username}' (Client ID: ${clientRecord.client_id}) logged in.`);
+  // Set cookies on response
+  const cookieOpts = { path: '/', maxAge: 30 * 86400 * 1000 };
+  res.cookie('userid', String(clientRecord.client_id), cookieOpts);
+  res.cookie('user_id', String(clientRecord.client_id), cookieOpts);
+  res.cookie('client_id', String(clientRecord.client_id), cookieOpts);
+  res.cookie('empid', String(clientRecord.empid), cookieOpts);
+  res.cookie('firmid', String(clientRecord.firm_id), cookieOpts);
+  res.cookie('firm_id', String(clientRecord.firm_id), cookieOpts);
+  res.cookie('FIRMID', String(clientRecord.firm_id), cookieOpts);
+
+  logReallocation(`[CLIENT AUTH] Client '${clientRecord.username}' (Emp ID: ${clientRecord.empid}, Firm ID: ${clientRecord.firm_id}) logged in locally.`);
 
   return res.json({
     success: true,
     token: token,
     client_id: clientRecord.client_id,
+    firm_id: clientRecord.firm_id,
+    empid: clientRecord.empid,
+    firmid: clientRecord.firmid,
     username: clientRecord.username,
     name: clientRecord.name,
     role: clientRecord.role
@@ -264,28 +266,24 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  const { name, username, password } = req.body || {};
+  const { name, username, password, empid, firmid } = req.body || {};
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required for registration.' });
-  }
-
-  const cleanUser = username.trim();
-  const cleanPass = password.trim();
+  const cleanUser = (username || empid || `user_${Date.now()}`).trim();
+  const cleanPass = (password || 'password').trim();
   const cleanName = (name && name.trim()) ? name.trim() : cleanUser;
+  const parsedEmpId = parseInt(empid, 10);
+  const parsedFirmId = parseInt(firmid, 10);
 
-  // Check if username already exists in defaultClientsList
-  const existingUser = defaultClientsList.find(c => c.username.toLowerCase() === cleanUser.toLowerCase());
-  if (existingUser) {
-    return res.status(400).json({ error: `Username '${cleanUser}' is already registered. Please log in.` });
-  }
-
-  // Generate new Client ID
+  // Generate or use provided Client ID
   const maxId = Math.max(...defaultClientsList.map(c => c.client_id || 0), 4000);
-  const newClientId = maxId + 1;
+  const newClientId = !isNaN(parsedEmpId) ? parsedEmpId : (maxId + 1);
+  const newFirmId = !isNaN(parsedFirmId) ? parsedFirmId : 5;
 
   const newClientRecord = {
     client_id: newClientId,
+    firm_id: newFirmId,
+    empid: String(newClientId),
+    firmid: String(newFirmId),
     username: cleanUser,
     password: cleanPass,
     name: cleanName,
@@ -294,33 +292,13 @@ app.post('/api/auth/register', async (req, res) => {
 
   defaultClientsList.push(newClientRecord);
 
-  // Attempt database registration in user_table if possible
-  try {
-    await poolQuery(
-      `INSERT INTO user_table (
-        user_id, email, firstname, lastname, password, privilege,
-        is_superuser, is_staff, is_active,
-        address1, address2, city, state, country, postalCode,
-        dayPhone, evenPhone, cellphone, fax, nativeState,
-        security_question, answer, settings_enabled
-      ) VALUES (
-        ?, ?, ?, ?, ?, 'client',
-        0, 0, 1,
-        '', '', '', '', '', '',
-        '', '', '', '', '',
-        '', '', 0
-      )`,
-      [newClientId, `${cleanUser}@client.com`, cleanName, '', cleanPass]
-    );
-    console.log(`[CLIENT AUTH] Registered new user '${cleanUser}' (Client ID: ${newClientId}) in DB user_table.`);
-  } catch (err) {
-    console.log(`[CLIENT AUTH] Note: DB insert fallback for '${cleanUser}':`, err.message);
-  }
-
   // Automatically log in the user upon registration
   const token = `sess_${newClientId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const sessionData = {
     client_id: newClientId,
+    firm_id: newFirmId,
+    empid: String(newClientId),
+    firmid: String(newFirmId),
     username: cleanUser,
     name: cleanName,
     role: 'client',
@@ -329,12 +307,24 @@ app.post('/api/auth/register', async (req, res) => {
 
   activeSessions[token] = sessionData;
 
-  logReallocation(`[CLIENT AUTH] New account '${cleanUser}' (Client ID: ${newClientId}) registered and logged in.`);
+  const cookieOpts = { path: '/', maxAge: 30 * 86400 * 1000 };
+  res.cookie('userid', String(newClientId), cookieOpts);
+  res.cookie('user_id', String(newClientId), cookieOpts);
+  res.cookie('client_id', String(newClientId), cookieOpts);
+  res.cookie('empid', String(newClientId), cookieOpts);
+  res.cookie('firmid', String(newFirmId), cookieOpts);
+  res.cookie('firm_id', String(newFirmId), cookieOpts);
+  res.cookie('FIRMID', String(newFirmId), cookieOpts);
+
+  logReallocation(`[CLIENT AUTH] New local account '${cleanUser}' (Client ID: ${newClientId}, Firm ID: ${newFirmId}) registered and logged in.`);
 
   return res.json({
     success: true,
     token: token,
     client_id: newClientId,
+    firm_id: newFirmId,
+    empid: String(newClientId),
+    firmid: String(newFirmId),
     username: cleanUser,
     name: cleanName,
     role: 'client',
@@ -2779,7 +2769,7 @@ app.post('/api/queue/populate-topic', async (req, res) => {
   }
 });
 
-// Full Orchestration Endpoint (Step 1 to Step 4)
+// Full Orchestration Endpoint (Step 1 & Step 2: DB Updates Only)
 app.post('/api/orchestrate/full-workflow', async (req, res) => {
   const promptText = req.body.prompt || req.body.request || (req.body.topic ? `${req.body.topic} across ${req.body.region || 'South India'}` : '');
 
@@ -2802,20 +2792,19 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
 
     logReallocation(`[LLM DISCOVERY] LLM identified ${discovered.length} locations across requested coverage scope.`);
 
-    // Step 2: Portal DB Validation
+    // Step 2: Portal DB Validation & Auto-Registration into portal table
     logReallocation(`[PORTAL VALIDATION] Validating discovered locations against Portal Database & index...`);
     const validated = await validateDiscoveredCitiesWithPortalDB(discovered, defaultScraperConfig.memberid);
     latestValidationResults = validated;
 
     const completedCount = validated.filter(v => v.status === 'Completed').length;
     const activeCount = validated.length - completedCount;
-    logReallocation(`[PORTAL VALIDATION] Validation complete: ${completedCount} completed locations skipped, ${activeCount} locations queued for execution.`);
+    logReallocation(`[PORTAL VALIDATION] Validation complete: ${completedCount} completed locations skipped, ${activeCount} locations updated/registered in Portal DB.`);
 
-    // Step 3 & 4: Queue Creation & Batch Splitting
+    // Generated batch items computed for response (not assigned to cityQueue to avoid auto-starting runners/executables)
     const generatedQueue = buildQueueAndBatchesFromValidation(validated, bSize, req.clientId);
-    cityQueue = generatedQueue;
 
-    logReallocation(`[WORKFLOW QUEUE] Automatically generated workflow queue with ${cityQueue.length} executable batches.`);
+    logReallocation(`[WORKFLOW DISCOVERY] Prompt processed successfully. Database updated with ${validated.length} location portal records.`);
 
     res.json({
       success: true,
@@ -2824,7 +2813,7 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
       region: coverageScope,
       discovery: discovered,
       validation: validated,
-      queueCount: cityQueue.length
+      queueCount: generatedQueue.length
     });
 
   } catch (err) {
