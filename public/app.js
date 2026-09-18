@@ -1101,7 +1101,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (res.ok) {
           const data = await res.json();
-          renderDiscoveryResults(data.discovery || []);
+          // renderDiscoveryResults(data.discovery || []); // Step 1 panel commented out as requested
           renderValidationResults(data.validation || []);
           await fetchStatus();
         } else {

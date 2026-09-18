@@ -953,7 +953,7 @@ async function getValidGroqChatModel(key, preferredModel) {
     console.error('[GROQ MODEL AUTO-DISCOVERY] Error:', err.message);
   }
 
-  return 'llama-3.3-70b-versatile';
+  return 'openai/gpt-oss-20b';
 }
 
 async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = null) {
@@ -975,9 +975,9 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
         rows[0];
 
       if (match) {
-        let selectedModel = match.MODEL_NAME || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+        let selectedModel = match.MODEL_NAME || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
         if (selectedModel.toLowerCase().includes('prompt-guard') || selectedModel.toLowerCase().includes('guard')) {
-          selectedModel = 'llama-3.3-70b-versatile';
+          selectedModel = 'openai/gpt-oss-20b';
         }
         const isActive = match.STATUS === 'ACTIVE';
 
@@ -1020,6 +1020,46 @@ async function getActiveApiKey(targetUserId, provider = 'GROQ', targetFirmId = n
 
 // LLM Region Discovery & Business Estimation Engine (Step 1)
 async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, targetUserId, targetFirmId = null) {
+  const searchClean = (regionCoverage || topic || '').toLowerCase().trim();
+
+  // 1. Dynamic DB Portal Search: Query portal table directly for matching portalname/city/state
+  if (searchClean) {
+    let dbConn;
+    try {
+      dbConn = await mysql.createConnection(dbConfig);
+      const [directRows] = await dbConn.query(
+        `SELECT portalid, portalname, state, contentcount 
+         FROM portal 
+         WHERE status = 'ACTIVE' AND portalname != '' AND (
+           LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(state)) = ? OR LOWER(TRIM(city)) = ? OR
+           LOWER(portalname) LIKE ? OR LOWER(state) LIKE ? OR LOWER(city) LIKE ?
+         )
+         ORDER BY CAST(contentcount AS UNSIGNED) DESC, portalid ASC LIMIT 30`,
+        [searchClean, searchClean, searchClean, `%${searchClean}%`, `%${searchClean}%`, `%${searchClean}%`]
+      );
+
+      if (directRows && directRows.length > 0) {
+        logReallocation(`[DYNAMIC DB SEARCH] Found ${directRows.length} matching portals directly in database for term '${searchClean}'.`);
+        return directRows.map(r => {
+          const rawCount = parseInt(r.contentcount, 10) || 5000;
+          const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
+          return {
+            state: r.state ? r.state.trim() : 'India',
+            city: r.portalname ? r.portalname.trim() : 'Location',
+            portal_id: r.portalid,
+            approx_businesses: finalCount,
+            db_content_count: rawCount
+          };
+        });
+      }
+    } catch (dbErr) {
+      console.warn('[DYNAMIC DB SEARCH NOTICE]', dbErr.message);
+    } finally {
+      if (dbConn) await dbConn.end().catch(() => { });
+    }
+  }
+
+  // 2. LLM Discovery: Call LLM/Gemini if prompt term not found in portal database
   const activeKeyObj = await getActiveApiKey(targetUserId, 'GROQ', targetFirmId);
 
   if (!activeKeyObj.exists || !activeKeyObj.key) {
@@ -1242,20 +1282,59 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     if (connection) await connection.end();
   }
 
-  if (discoveredList.length === 0) {
-    discoveredList = [
-      { state: 'Karnataka', city: 'Bangalore', portal_id: 11061, approx_businesses: 680000, db_content_count: 1000000 },
-      { state: 'Karnataka', city: 'Mysore', portal_id: 11062, approx_businesses: 120000, db_content_count: 150000 },
-      { state: 'Karnataka', city: 'Hubli', portal_id: 11063, approx_businesses: 80000, db_content_count: 100000 },
-      { state: 'Tamil Nadu', city: 'Chennai', portal_id: 12051, approx_businesses: 450000, db_content_count: 850000 },
-      { state: 'Tamil Nadu', city: 'Coimbatore', portal_id: 12052, approx_businesses: 150000, db_content_count: 200000 },
-      { state: 'Telangana', city: 'Hyderabad', portal_id: 13011, approx_businesses: 520000, db_content_count: 900000 },
-      { state: 'Kerala', city: 'Kochi', portal_id: 14021, approx_businesses: 130000, db_content_count: 180000 },
-      { state: 'Andhra Pradesh', city: 'Visakhapatnam', portal_id: 15031, approx_businesses: 170000, db_content_count: 220000 }
-    ];
+  if (discoveredList.length > 0) {
+    return discoveredList;
   }
 
-  return discoveredList;
+  // Fallback: If no direct match in DB and LLM call produced no results, create a dynamic single record from the search prompt
+  const fallbackCity = (regionCoverage || topic || 'Location').trim();
+  const titleCity = fallbackCity.charAt(0).toUpperCase() + fallbackCity.slice(1);
+
+  return [{
+    state: 'India',
+    city: titleCity,
+    portal_id: null,
+    approx_businesses: 5000,
+    db_content_count: 5000
+  }];
+}
+
+// Helper to populate SCRAPPER_PROCESSING table with prompt portals
+async function addPortalsToScrapperProcessing(validatedLocations, empId) {
+  if (!validatedLocations || !Array.isArray(validatedLocations) || validatedLocations.length === 0) return;
+  const eId = empId || defaultScraperConfig.user_id || 1572;
+  let connection;
+  try {
+    connection = await mysql.createConnection(dbConfig);
+    for (const item of validatedLocations) {
+      if (!item.portal_id && !item.city) continue;
+      const portalId = item.portal_id ? String(item.portal_id) : '0';
+      const portalName = item.city || item.portal_name || 'Location';
+
+      const [existing] = await connection.query(
+        `SELECT SP_ID FROM SCRAPPER_PROCESSING WHERE EMP_ID = ? AND PORTALID = ?`,
+        [eId, portalId]
+      );
+
+      if (existing && existing.length > 0) {
+        await connection.query(
+          `UPDATE SCRAPPER_PROCESSING SET STATUS = 'PENDING', UPDATE_DTM = NOW() WHERE SP_ID = ?`,
+          [existing[0].SP_ID]
+        );
+      } else {
+        await connection.query(
+          `INSERT INTO SCRAPPER_PROCESSING (EMP_ID, PORTALNAME, PORTALID, STATUS, INSRT_DTM, UPDATE_DTM)
+           VALUES (?, ?, ?, 'PENDING', NOW(), NOW())`,
+          [eId, portalName, portalId]
+        );
+      }
+    }
+    logReallocation(`[SCRAPPER_PROCESSING] Inserted/updated ${validatedLocations.length} prompt portals in SCRAPPER_PROCESSING for Employee ID ${eId}.`);
+  } catch (err) {
+    console.error('[SCRAPPER_PROCESSING DB ERROR]', err.message);
+  } finally {
+    if (connection) await connection.end().catch(() => { });
+  }
 }
 
 // Portal Validation Engine (Step 2)
@@ -2781,10 +2860,14 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
     const activeCount = validated.length - completedCount;
     logReallocation(`[PORTAL VALIDATION] Validation complete: ${completedCount} completed locations skipped, ${activeCount} locations updated/registered in Portal DB.`);
 
+    // Automatically populate SCRAPPER_PROCESSING table with prompt portals using logged-in user's EMP_ID
+    const loggedEmpId = req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
+    await addPortalsToScrapperProcessing(validated, loggedEmpId);
+
     // Generated batch items computed for response (not assigned to cityQueue to avoid auto-starting runners/executables)
     const generatedQueue = buildQueueAndBatchesFromValidation(validated, bSize, req.clientId);
 
-    logReallocation(`[WORKFLOW DISCOVERY] Prompt processed successfully. Database updated with ${validated.length} location portal records.`);
+    logReallocation(`[WORKFLOW DISCOVERY] Prompt processed successfully. Added ${validated.length} portals to SCRAPPER_PROCESSING table for Employee ID ${loggedEmpId}.`);
 
     res.json({
       success: true,
