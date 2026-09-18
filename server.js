@@ -1031,20 +1031,27 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     let dbConn;
     try {
       dbConn = await mysql.createConnection(dbConfig);
-      const wordPattern = `[[:<:]]${searchClean.replace(/[^a-z0-9]/g, '')}[[:>:]]`;
+      const searchLike = `%${searchClean.replace(/[^a-z0-9 ]/g, '')}%`;
       const [directRows] = await dbConn.query(
         `SELECT portalid, portalname, state, contentcount 
          FROM portal 
          WHERE status = 'ACTIVE' AND portalname != '' AND (type IS NULL OR type = '' OR type != 'MYBLOCKS.US') AND (
            LOWER(TRIM(portalname)) = ? OR LOWER(TRIM(state)) = ? OR LOWER(TRIM(city)) = ? OR
-           LOWER(portalname) REGEXP ? OR LOWER(state) REGEXP ? OR LOWER(city) REGEXP ?
+           LOWER(portalname) LIKE ? OR LOWER(state) LIKE ? OR LOWER(city) LIKE ?
          )
          ORDER BY CASE WHEN LOWER(TRIM(portalname)) = ? THEN 1 WHEN LOWER(TRIM(state)) = ? THEN 2 ELSE 3 END, CAST(contentcount AS UNSIGNED) DESC, portalid ASC LIMIT 30`,
-        [searchClean, searchClean, searchClean, wordPattern, wordPattern, wordPattern, searchClean, searchClean]
+        [searchClean, searchClean, searchClean, searchLike, searchLike, searchLike, searchClean, searchClean]
       );
 
       if (directRows && directRows.length > 0) {
         logReallocation(`[DYNAMIC DB SEARCH] Found ${directRows.length} matching portals directly in database for term '${searchClean}'.`);
+        console.log(`\n==================================================`);
+        console.log(`🔍 [CITY SEARCH COMPLETED]`);
+        console.log(`   Prompt Search Term : "${searchClean}"`);
+        console.log(`   LLM Provider Used  : Local Portal DB Match`);
+        console.log(`   Model Used         : N/A (Direct Database Match)`);
+        console.log(`   Found Locations    : ${directRows.length} portal record(s)`);
+        console.log(`==================================================\n`);
         return directRows.map(r => {
           const rawCount = parseInt(r.contentcount, 10) || 5000;
           const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
@@ -1093,6 +1100,8 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
       if (gModel === 'gemini-1.5' || gModel === 'gemini-1.5-flash') gModel = 'gemini-1.5-flash';
       else if (gModel === 'gemini-2.0' || gModel === 'gemini-2.0-flash') gModel = 'gemini-2.0-flash';
       else if (gModel.includes('3.7')) gModel = 'gemini-2.5-flash';
+
+      modelName = gModel;
 
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key}`;
       const geminiRes = await fetch(geminiUrl, {
@@ -1191,6 +1200,14 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
 
         if (Array.isArray(parsed) && parsed.length > 0) {
           logReallocation(`[LLM DISCOVERY] ${provider} (${modelName}) generated ${parsed.length} dynamic location discoveries for topic '${topic}' across '${regionCoverage}'.`);
+          console.log(`\n==================================================`);
+          console.log(`🔍 [CITY SEARCH COMPLETED]`);
+          console.log(`   Prompt Search Term : "${regionCoverage || topic}"`);
+          console.log(`   LLM Provider Used  : ${provider}`);
+          console.log(`   Model Used         : ${modelName}`);
+          console.log(`   Discovered Cities  : ${parsed.length} location(s)`);
+          console.log(`==================================================\n`);
+
           return parsed.map(item => {
             const rawCount = parseInt(item.approx_businesses, 10) || 5000;
             const finalCount = (targetCompaniesLimit && targetCompaniesLimit > 0) ? Math.min(rawCount, targetCompaniesLimit) : rawCount;
