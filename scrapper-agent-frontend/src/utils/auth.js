@@ -13,6 +13,38 @@ export function getAuthContext() {
   return { userId, firmId, isAuthenticated: Boolean(userId && firmId) };
 }
 
+export function clearAuthAndLogout() {
+  if (typeof window !== 'undefined') {
+    // Clear localStorage and sessionStorage
+    localStorage.clear();
+    sessionStorage.clear();
+
+    // Clear all cookies using js-cookie
+    const allCookies = Cookies.get();
+    if (allCookies) {
+      Object.keys(allCookies).forEach((cookieName) => {
+        Cookies.remove(cookieName);
+        Cookies.remove(cookieName, { path: '/' });
+        // Clean domain cookies if applicable
+        const hostParts = window.location.hostname.split('.');
+        if (hostParts.length > 1) {
+          const domain = '.' + hostParts.slice(-2).join('.');
+          Cookies.remove(cookieName, { path: '/', domain });
+        }
+      });
+    }
+
+    // Redirect to login or reload
+    const hostname = window.location.hostname;
+    const isProd = hostname.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(hostname));
+    if (isProd) {
+      window.location.href = 'https://myblocks.in/login';
+    } else {
+      window.location.reload();
+    }
+  }
+}
+
 export function checkAuthAndRedirect() {
   saveRedirectAfterLogin();
 

@@ -1,5 +1,6 @@
 import React from 'react';
-import { User, LogOut, Cpu, KeyRound } from 'lucide-react';
+import { User, LogOut, Cpu } from 'lucide-react';
+import { clearAuthAndLogout } from '../utils/auth';
 
 export default function Header({ activeTabLabel, runnersCount = 0, sessionUser = 'MyBlocks Client (919)' }) {
   return (
@@ -33,10 +34,7 @@ export default function Header({ activeTabLabel, runnersCount = 0, sessionUser =
         <button
           className="btn btn-secondary btn-sm"
           onClick={() => {
-            if (confirm('Logout of session?')) {
-              localStorage.clear();
-              window.location.reload();
-            }
+            clearAuthAndLogout();
           }}
           style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
         >
