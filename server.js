@@ -136,6 +136,15 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Global HTTP Request Logger
+app.use((req, res, next) => {
+  if (req.url && req.url.includes('/api/')) {
+    console.log(`[HTTP ${req.method}] ${req.url} - Origin: ${req.headers.origin || '-'}, Body:`, req.body ? JSON.stringify(req.body) : '{}');
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/scrapper-agent', express.static(path.join(__dirname, 'public')));
 
@@ -3221,36 +3230,57 @@ app.post('/api/runners/start', async (req, res) => {
 });
 
 app.post('/api/runners/stop', async (req, res) => {
+  console.log('[API /api/runners/stop] Received stop request:', JSON.stringify(req.body), 'Requesting Client ID:', req.clientId);
   const { runner_id, superadmin_password } = req.body || {};
   const runner = runnerRegistry.find(r => r.runner_id === runner_id || r.agent_name === runner_id);
+
   if (!runner) {
+    console.log(`[API /api/runners/stop] Runner '${runner_id}' not found in runnerRegistry.`);
     return res.status(404).json({ error: 'Runner not found' });
   }
 
-  if (isOtherUserRunner(runner, req.clientId)) {
+  console.log(`[API /api/runners/stop] Found runner: ${runner.runner_id} (${runner.agent_name}), client_id: ${runner.client_id}`);
+
+  const isOther = isOtherUserRunner(runner, req.clientId);
+  console.log(`[API /api/runners/stop] Is other user runner? ${isOther} (req.clientId: ${req.clientId})`);
+
+  if (isOther) {
+    console.log(`[API /api/runners/stop] Validating superadmin password... Received: '${superadmin_password}', Expected: '${SUPERADMIN_PASSWORD}'`);
     if (superadmin_password !== SUPERADMIN_PASSWORD) {
+      console.warn(`[API /api/runners/stop] 403 Forbidden: Invalid superadmin password for runner ${runner.runner_id}`);
       return res.status(403).json({ success: false, error: 'Superadmin password required to control another user\'s runner entry.' });
     }
+    console.log(`[API /api/runners/stop] Superadmin password verified successfully!`);
   }
 
   // Send WS stop_execution signal directly to runner socket
+  let wsSentCount = 0;
   wsConnectedRunners.forEach((info, id) => {
     if (id === runner.runner_id || info.runner_name === runner.agent_name || (runner.agent_name && runner.agent_name.includes(info.runner_name))) {
       if (info.ws && info.ws.readyState === 1) {
-        try { info.ws.send(JSON.stringify({ event: 'stop_execution', runner_id: runner.runner_id, execution_id: runner.execution_id })); } catch (e) { }
+        try {
+          info.ws.send(JSON.stringify({ event: 'stop_execution', runner_id: runner.runner_id, execution_id: runner.execution_id }));
+          wsSentCount++;
+        } catch (e) {
+          console.error(`[API /api/runners/stop] Error sending WS stop signal:`, e.message);
+        }
       }
     }
   });
+  console.log(`[API /api/runners/stop] Sent WS stop_execution to ${wsSentCount} socket(s).`);
 
   if (runner.execution_id) {
     try {
+      console.log(`[API /api/runners/stop] Stopping manager execution ID: ${runner.execution_id}`);
       await fetch(`${SCRAPER_MANAGER_URL}/execution/${runner.execution_id}/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-User-Id': String(defaultScraperConfig.user_id), 'X-Firm-Id': '5' },
         body: JSON.stringify({}),
         signal: AbortSignal.timeout(2000)
       });
-    } catch (e) { }
+    } catch (e) {
+      console.warn(`[API /api/runners/stop] Manager execution stop request warning:`, e.message);
+    }
   }
 
   try {
@@ -3274,6 +3304,7 @@ app.post('/api/runners/stop', async (req, res) => {
   const runningCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && c.status === 'Running');
   if (runningCity) {
     runningCity.status = 'Stopped';
+    console.log(`[API /api/runners/stop] Marked running city '${runningCity.city_name}' as Stopped.`);
   }
 
   runnerExecutionLocks.delete(runner.runner_id);
@@ -3282,6 +3313,7 @@ app.post('/api/runners/stop', async (req, res) => {
   runner.current_batch = null;
   runner.execution_id = null;
 
+  console.log(`[API /api/runners/stop] Successfully stopped runner ${runner.agent_name}. Returning JSON response.`);
   res.json({ success: true, message: `Runner ${runner.agent_name} execution stopped.` });
 });
 
