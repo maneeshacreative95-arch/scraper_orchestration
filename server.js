@@ -108,24 +108,7 @@ const corsOptions = {
   origin: true, // Allow all requesting origins dynamically
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Session-Token',
-    'X-Role',
-    'X-Admin',
-    'X-Client-Id',
-    'X-User-Id',
-    'X-Auth-Client-Id',
-    'X-Firm-Id',
-    'x-session-token',
-    'x-role',
-    'x-admin',
-    'x-client-id',
-    'x-user-id',
-    'x-auth-client-id',
-    'x-firm-id'
-  ],
+  allowedHeaders: ['*'],
   exposedHeaders: ['*'],
   optionsSuccessStatus: 200
 };
@@ -135,10 +118,11 @@ app.options('*', cors(corsOptions));
 
 app.use((req, res, next) => {
   const origin = req.headers.origin || '*';
+  const reqHeaders = req.headers['access-control-request-headers'] || '*';
   res.header('Access-Control-Allow-Origin', origin);
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Session-Token, X-Role, X-Admin, X-Client-Id, X-User-Id, X-Auth-Client-Id, X-Firm-Id, x-session-token, x-role, x-admin, x-client-id, x-user-id, x-auth-client-id, x-firm-id');
+  res.header('Access-Control-Allow-Headers', reqHeaders);
 
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.set('Pragma', 'no-cache');
