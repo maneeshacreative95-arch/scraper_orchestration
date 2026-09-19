@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import CityDiscovery from './views/CityDiscovery';
@@ -16,9 +17,9 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('city-discovery');
   const [runners, setRunners] = useState([]);
   const [sessionUser, setSessionUser] = useState('MyBlocks Client (919)');
+  const location = useLocation();
 
   const fetchStatus = async () => {
     try {
@@ -40,40 +41,26 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const renderActiveTabContent = () => {
-    switch (activeTab) {
-      case 'city-discovery':
-        return <CityDiscovery runners={runners} onRefreshStatus={fetchStatus} />;
-      case 'agent-registry':
-        return <AgentRegistry runners={runners} onRefreshStatus={fetchStatus} />;
-      case 'agent-allocation':
-        return <GenericView title="Agent Allocation" description="Automated runner network load balancer and batch distributor." icon={Sliders} />;
-      case 'batch-scheduler':
-        return <GenericView title="Batch Scheduler" description="Dynamic workflow batch partitioner and queue scheduler." icon={Calendar} />;
-      case 'execution-pipeline':
-        return <GenericView title="Execution Pipeline" description="Distributed runner execution monitor and active batch stage progress." icon={PlayCircle} />;
-      case 'auto-reallocation':
-        return <GenericView title="Auto Reallocation" description="Self-healing crash recovery and live runner reallocation stream." icon={RefreshCw} />;
-      case 'performance-matrix':
-        return <GenericView title="Performance Matrix" description="Real-time scraping analytics, company counts, and velocity metrics." icon={BarChart3} />;
-      case 'performance-improvements':
-        return <GenericView title="Performance Improvements" description="Algorithmic optimizations, rate limit tuners, and proxy health." icon={Zap} />;
-      case 'error-recovery':
-        return <GenericView title="Error Recovery" description="Common scraper error logs, failed request retries, and exceptions." icon={AlertTriangle} />;
-      case 'quality-check':
-        return <GenericView title="Quality Check" description="Scraped vendor data validator and database record verification." icon={CheckCircle2} />;
-      default:
-        return <CityDiscovery runners={runners} onRefreshStatus={fetchStatus} />;
-    }
-  };
-
   return (
     <div className="app-layout">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Sidebar />
       <main className="main-content">
-        <Header activeTabLabel={activeTab} runnersCount={runners.length} sessionUser={sessionUser} />
+        <Header activeTabLabel={location.pathname} runnersCount={runners.length} sessionUser={sessionUser} />
         <div className="app-container">
-          {renderActiveTabContent()}
+          <Routes>
+            <Route path="/" element={<Navigate to="/city-discovery" replace />} />
+            <Route path="/city-discovery" element={<CityDiscovery runners={runners} onRefreshStatus={fetchStatus} />} />
+            <Route path="/agent-registry" element={<AgentRegistry runners={runners} onRefreshStatus={fetchStatus} />} />
+            <Route path="/agent-allocation" element={<GenericView title="Agent Allocation" description="Automated runner network load balancer and batch distributor." icon={Sliders} />} />
+            <Route path="/batch-scheduler" element={<GenericView title="Batch Scheduler" description="Dynamic workflow batch partitioner and queue scheduler." icon={Calendar} />} />
+            <Route path="/execution-pipeline" element={<GenericView title="Execution Pipeline" description="Distributed runner execution monitor and active batch stage progress." icon={PlayCircle} />} />
+            <Route path="/auto-reallocation" element={<GenericView title="Auto Reallocation" description="Self-healing crash recovery and live runner reallocation stream." icon={RefreshCw} />} />
+            <Route path="/performance-matrix" element={<GenericView title="Performance Matrix" description="Real-time scraping analytics, company counts, and velocity metrics." icon={BarChart3} />} />
+            <Route path="/performance-improvements" element={<GenericView title="Performance Improvements" description="Algorithmic optimizations, rate limit tuners, and proxy health." icon={Zap} />} />
+            <Route path="/error-recovery" element={<GenericView title="Error Recovery" description="Common scraper error logs, failed request retries, and exceptions." icon={AlertTriangle} />} />
+            <Route path="/quality-check" element={<GenericView title="Quality Check" description="Scraped vendor data validator and database record verification." icon={CheckCircle2} />} />
+            <Route path="*" element={<Navigate to="/city-discovery" replace />} />
+          </Routes>
         </div>
         <footer className="app-footer">
           <p>Scraper Agent Orchestrator &copy; {new Date().getFullYear()} MyBlocks Enterprise AI Platform. Built with React.js & Node.js Express.</p>

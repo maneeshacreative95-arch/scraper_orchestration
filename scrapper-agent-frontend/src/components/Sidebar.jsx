@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Compass,
   Bot,
@@ -13,19 +14,22 @@ import {
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { id: 'city-discovery', label: 'City Discovery', icon: Compass },
-  { id: 'agent-registry', label: 'Agent Registry', icon: Bot },
-  { id: 'agent-allocation', label: 'Agent Allocation', icon: Sliders },
-  { id: 'batch-scheduler', label: 'Batch Scheduler', icon: Calendar },
-  { id: 'execution-pipeline', label: 'Execution Pipeline', icon: PlayCircle },
-  { id: 'auto-reallocation', label: 'Auto Reallocation', icon: RefreshCw },
-  { id: 'performance-matrix', label: 'Performance Matrix', icon: BarChart3 },
-  { id: 'performance-improvements', label: 'Performance Improvements', icon: Zap },
-  { id: 'error-recovery', label: 'Error Recovery', icon: AlertTriangle },
-  { id: 'quality-check', label: 'Quality Check', icon: CheckCircle2 }
+  { id: 'city-discovery', path: '/city-discovery', label: 'City Discovery', icon: Compass },
+  { id: 'agent-registry', path: '/agent-registry', label: 'Agent Registry', icon: Bot },
+  { id: 'agent-allocation', path: '/agent-allocation', label: 'Agent Allocation', icon: Sliders },
+  { id: 'batch-scheduler', path: '/batch-scheduler', label: 'Batch Scheduler', icon: Calendar },
+  { id: 'execution-pipeline', path: '/execution-pipeline', label: 'Execution Pipeline', icon: PlayCircle },
+  { id: 'auto-reallocation', path: '/auto-reallocation', label: 'Auto Reallocation', icon: RefreshCw },
+  { id: 'performance-matrix', path: '/performance-matrix', label: 'Performance Matrix', icon: BarChart3 },
+  { id: 'performance-improvements', path: '/performance-improvements', label: 'Performance Improvements', icon: Zap },
+  { id: 'error-recovery', path: '/error-recovery', label: 'Error Recovery', icon: AlertTriangle },
+  { id: 'quality-check', path: '/quality-check', label: 'Quality Check', icon: CheckCircle2 }
 ];
 
-export default function Sidebar({ activeTab, setActiveTab }) {
+export default function Sidebar() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   return (
     <aside className="app-sidebar">
       <div>
@@ -40,12 +44,12 @@ export default function Sidebar({ activeTab, setActiveTab }) {
         <nav className="workflow-nav">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const isActive = location.pathname.startsWith(item.path) || (location.pathname === '/' && item.id === 'city-discovery');
             return (
               <button
                 key={item.id}
                 className={`nav-btn ${isActive ? 'active' : ''}`}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => navigate(item.path)}
               >
                 <Icon size={18} style={{ color: isActive ? '#3b82f6' : 'var(--color-text-muted)' }} />
                 <span>{item.label}</span>
