@@ -2891,9 +2891,11 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
 
 // Endpoint to manually add selected portals to SCRAPPER_PROCESSING (with duplicate checking)
 app.post('/api/orchestrate/add-to-processing', async (req, res) => {
+  console.log('[ADD TO PROCESSING] Request received:', JSON.stringify(req.body));
   const { items, target_emp_id, emp_id } = req.body || {};
 
   if (!items || !Array.isArray(items) || items.length === 0) {
+    console.log('[ADD TO PROCESSING] Bad request: items missing or empty');
     return res.status(400).json({ error: 'No portals selected to add to SCRAPPER_PROCESSING.' });
   }
 
@@ -2903,10 +2905,14 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
   let connection;
 
   try {
-    connection = await mysql.createConnection(dbConfig);
+    console.log('[ADD TO PROCESSING] Acquiring DB connection from pool for empId:', empId);
+    connection = await dbPool.getConnection();
+    console.log('[ADD TO PROCESSING] DB connection acquired successfully');
+
     for (const item of items) {
       const portalId = String(item.portal_id || item.portalid || '0');
       const portalName = item.city || item.portal_name || 'Location';
+      console.log(`[ADD TO PROCESSING] Checking portalId: ${portalId}, portalName: ${portalName}`);
 
       const [existing] = await connection.query(
         `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING WHERE PORTALID = ? LIMIT 1`,
@@ -2914,8 +2920,10 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
       );
 
       if (existing && existing.length > 0) {
+        console.log(`[ADD TO PROCESSING] Portal ${portalId} already exists (EMP_ID: ${existing[0].EMP_ID})`);
         blockedItems.push({ portal_id: portalId, city: portalName, emp_id: existing[0].EMP_ID });
       } else {
+        console.log(`[ADD TO PROCESSING] Inserting portal ${portalId} into SCRAPPER_PROCESSING`);
         await connection.query(
           `INSERT INTO SCRAPPER_PROCESSING (EMP_ID, PORTALNAME, PORTALID, STATUS, INSRT_DTM, UPDATE_DTM)
            VALUES (?, ?, ?, 'PENDING', NOW(), NOW())`,
@@ -2927,6 +2935,7 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
 
     if (blockedItems.length > 0 && addedCount === 0) {
       const blockedNames = blockedItems.map(b => `'${b.city}' (ID: ${b.portal_id})`).join(', ');
+      console.log('[ADD TO PROCESSING] All items blocked:', blockedNames);
       return res.status(400).json({
         success: false,
         error: `Portal(s) ${blockedNames} already in processing. Please contact admin.`
@@ -2939,14 +2948,18 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
       msg += ` Note: ${blockedItems.length} portal(s) (${blockedNames}) already exist in processing and were skipped (Contact admin).`;
     }
 
+    console.log('[ADD TO PROCESSING] Success:', msg);
     logReallocation(`[SCRAPPER_PROCESSING MANUAL ADD] Added ${addedCount} portals, blocked ${blockedItems.length} duplicate portals for Employee ID ${empId}.`);
     res.json({ success: true, addedCount, blockedCount: blockedItems.length, message: msg, blockedItems });
 
   } catch (err) {
-    console.error('[ADD TO PROCESSING ERROR]', err.message);
+    console.error('[ADD TO PROCESSING ERROR]', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   } finally {
-    if (connection) await connection.end().catch(() => { });
+    if (connection) {
+      console.log('[ADD TO PROCESSING] Releasing DB connection back to pool');
+      connection.release();
+    }
   }
 });
 
