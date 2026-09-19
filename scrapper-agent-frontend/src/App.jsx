@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import Cookies from 'js-cookie';
 import { apiFetch } from './api/config';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import CityDiscovery from './views/CityDiscovery';
 import AgentRegistry from './views/AgentRegistry';
 import GenericView from './views/GenericView';
+import { checkAuthAndRedirect, saveRedirectAfterLogin, getAuthContext } from './utils/auth';
 import {
   Sliders,
   Calendar,
@@ -38,17 +38,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    const userId = Cookies.get('userid') || Cookies.get('user_id') || Cookies.get('empid');
-    const firmId = Cookies.get('firmid') || Cookies.get('firm_id') || Cookies.get('FIRMID');
+    saveRedirectAfterLogin();
+    const isAllowed = checkAuthAndRedirect();
+    if (!isAllowed) return;
 
-    const hostname = window.location.hostname;
-    const isProd = hostname.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(hostname));
-
-    if (isProd && (!userId || !firmId)) {
-      window.location.href = 'https://myblocks.in/login';
-      return;
-    }
-
+    const { userId } = getAuthContext();
     if (userId) {
       setSessionUser(`MyBlocks User (${userId})`);
     }
@@ -56,7 +50,8 @@ export default function App() {
     fetchStatus();
     const interval = setInterval(fetchStatus, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [location.pathname, location.search]);
+
 
 
 
