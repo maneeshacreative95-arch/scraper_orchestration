@@ -77,8 +77,7 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
     const res = await apiFetch(endpoint, {
       method,
       headers: {
-        'Content-Type': 'application/json',
-        ...(superadminPassword ? { 'x-superadmin-password': superadminPassword } : {})
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(bodyData)
     });
