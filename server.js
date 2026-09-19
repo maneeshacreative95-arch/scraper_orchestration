@@ -860,10 +860,6 @@ function getConnectedWsRunner(runnerOrAgent) {
   return null;
 }
 
-  }
-
-  return null;
-}
 
 function isRunnerConnectedAndActive(runnerOrAgent) {
   return getConnectedWsRunner(runnerOrAgent) !== null;
@@ -4270,9 +4266,6 @@ async function monitorEngine() {
       r.current_workflow = null;
       r.portal_id = null;
       r.execution_id = null;
-      pId = null;
-    }
-
       pId = null;
     }
 
