@@ -1023,11 +1023,11 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
 }
 
 // LLM Region Discovery & Business Estimation Engine (Step 1)
-async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, targetUserId, targetFirmId = null) {
+async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, targetUserId, targetFirmId = null, forceLLM = false, existingCities = []) {
   const searchClean = (regionCoverage || topic || '').toLowerCase().trim();
 
-  // 1. Dynamic DB Portal Search: Query portal table directly for matching portalname/city/state
-  if (searchClean) {
+  // 1. Dynamic DB Portal Search: Query portal table directly for matching portalname/city/state (only if NOT forcing LLM expansion)
+  if (!forceLLM && searchClean) {
     let dbConn;
     try {
       dbConn = await mysql.createConnection(dbConfig);
@@ -1071,7 +1071,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     }
   }
 
-  // 2. LLM Discovery: Call LLM/Gemini if prompt term not found in portal database
+  // 2. LLM Discovery: Call LLM/Gemini if prompt term not found in portal database or forceLLM === true
   const activeKeyObj = await getActiveApiKey(targetUserId, null, targetFirmId);
 
   if (!activeKeyObj.exists || !activeKeyObj.key) {
@@ -1090,7 +1090,11 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
   const provider = (activeKeyObj.provider || 'GROQ').toUpperCase();
   let modelName = activeKeyObj.model;
 
-  logReallocation(`[LLM DISCOVERY] Using active Provider '${provider}', Model '${modelName}' from DB API_KEY_MANAGER.`);
+  logReallocation(`[LLM DISCOVERY] Using active Provider '${provider}', Model '${modelName}' from DB API_KEY_MANAGER (Force LLM: ${forceLLM}).`);
+
+  const excludePrompt = Array.isArray(existingCities) && existingCities.length > 0
+    ? ` Exclude the following already known cities/locations: [${existingCities.join(', ')}]. Discover 15 additional cities/towns in this region.`
+    : '';
 
   try {
     let textOut = '';
@@ -1110,7 +1114,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a global location and market intelligence AI. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code e.g. OM for Oman, IN for India, US for USA, UK for UK, AE for UAE, JP for Japan), "district", "zipcode". Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]`
+              text: `You are a global location and market intelligence AI. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'.${excludePrompt} Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code e.g. OM for Oman, IN for India, US for USA, UK for UK, AE for UAE, JP for Japan), "district", "zipcode". Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]`
             }]
           }],
           generationConfig: {
@@ -1147,7 +1151,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
             max_tokens: 2500,
             messages: [
               { role: 'system', content: 'You are a global location and market intelligence AI. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code), "district", "zipcode". Never use ellipses (...), truncated values, comments, or prose.' },
-              { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'. Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]` }
+              { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'.${excludePrompt} Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]` }
             ]
           }),
           signal: AbortSignal.timeout(12000)
@@ -2763,11 +2767,14 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
   const bSize = parseInt(req.body.batch_size, 10) || schedulerConfig.batch_size || 1000;
   const tLimit = req.body.targetLimit ? parseInt(req.body.targetLimit, 10) : (hasExplicitTarget ? targetContacts : 0);
 
+  const forceLLM = Boolean(req.body.force_llm);
+  const existingCities = Array.isArray(req.body.existing_cities) ? req.body.existing_cities : [];
+
   try {
-    logReallocation(`[LLM DISCOVERY] Initiating Region Discovery for prompt '${promptText}' (Topic: '${currentOrchestrationTopic}', Coverage: '${coverageScope}', User: '${req.clientId}')...`);
+    logReallocation(`[LLM DISCOVERY] Initiating Region Discovery for prompt '${promptText}' (Topic: '${currentOrchestrationTopic}', Coverage: '${coverageScope}', User: '${req.clientId}', Force LLM: ${forceLLM})...`);
 
     // Step 1: LLM Region Discovery using logged-in User's MyBlocks API Key Config
-    const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit, req.clientId, req.firmId);
+    const discovered = await llmRegionDiscovery(currentOrchestrationTopic, coverageScope, tLimit, req.clientId, req.firmId, forceLLM, existingCities);
     latestDiscoveryResults = discovered;
 
     logReallocation(`[LLM DISCOVERY] LLM identified ${discovered.length} locations across requested coverage scope.`);

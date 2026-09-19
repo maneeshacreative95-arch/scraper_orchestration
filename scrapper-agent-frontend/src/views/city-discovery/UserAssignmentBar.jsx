@@ -1,5 +1,6 @@
 import React from 'react';
 import Checkbox from '../../components/Checkbox';
+import ExpandWithAiBtn from './ExpandWithAiBtn';
 
 export default function UserAssignmentBar({
   assignToOtherUser,
@@ -8,7 +9,9 @@ export default function UserAssignmentBar({
   setSelectedAgentEmpId,
   agentOptions,
   isAddingToProcessing,
-  handleAddToProcessing
+  handleAddToProcessing,
+  isExpanding,
+  handleExpandSearchWithAI
 }) {
   return (
     <div
@@ -64,21 +67,29 @@ export default function UserAssignmentBar({
         )}
       </div>
 
-      <button
-        className="btn btn-primary"
-        disabled={isAddingToProcessing}
-        onClick={handleAddToProcessing}
-        style={{ borderRadius: '8px', padding: '10px 24px', fontSize: '0.95rem', fontWeight: 600 }}
-      >
-        {isAddingToProcessing ? (
-          <>
-            <span className="spinner-inline"></span>
-            Adding to Processing...
-          </>
-        ) : (
-          'Add Selected Portals to SCRAPPER_PROCESSING'
-        )}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+        <ExpandWithAiBtn
+          isExpanding={isExpanding}
+          handleExpandSearchWithAI={handleExpandSearchWithAI}
+        />
+
+        <button
+          className="btn btn-primary"
+          disabled={isAddingToProcessing}
+          onClick={handleAddToProcessing}
+          style={{ borderRadius: '8px', padding: '10px 24px', fontSize: '0.95rem', fontWeight: 600 }}
+        >
+          {isAddingToProcessing ? (
+            <>
+              <span className="spinner-inline"></span>
+              Adding to Processing...
+            </>
+          ) : (
+            'Add Selected Portals to SCRAPPER_PROCESSING'
+          )}
+        </button>
+      </div>
     </div>
   );
 }
+

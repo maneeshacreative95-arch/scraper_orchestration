@@ -1,141 +1,34 @@
-import React, { useState } from 'react';
-import { apiFetch } from '../api/config';
+import React from 'react';
 import DiscoverySearchPanel from './city-discovery/DiscoverySearchPanel';
 import PortalValidationTable from './city-discovery/PortalValidationTable';
 import UserAssignmentBar from './city-discovery/UserAssignmentBar';
 import { extractAgentOptions } from './city-discovery/helpers';
+import { useCityDiscovery } from './city-discovery/useCityDiscovery';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function CityDiscovery({ runners = [], onRefreshStatus }) {
-  const [promptInput, setPromptInput] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [validationResults, setValidationResults] = useState([]);
-  const [selectedPortals, setSelectedPortals] = useState({});
-  const [assignToOtherUser, setAssignToOtherUser] = useState(false);
-  const [selectedAgentEmpId, setSelectedAgentEmpId] = useState('');
-  const [isAddingToProcessing, setIsAddingToProcessing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState(null);
-  const [errorMessage, setErrorMessage] = useState(null);
-  const [llmInfo, setLlmInfo] = useState({ provider: 'GROQ', model: 'openai/gpt-oss-20b' });
-
-  const handleSearch = async (e) => {
-    e?.preventDefault();
-    if (!promptInput.trim()) return;
-
-    setIsSearching(true);
-    setStatusMessage(null);
-    setErrorMessage(null);
-
-    try {
-      const res = await apiFetch('/api/orchestrate/full-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptInput })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        setValidationResults(data.validation || []);
-        setSelectedPortals({});
-        setStatusMessage(`Successfully discovered ${data.validation?.length || 0} location portal records.`);
-        if (data.llm_info) setLlmInfo(data.llm_info);
-      } else {
-        setErrorMessage(data.error || 'Failed to execute region discovery search.');
-      }
-    } catch (err) {
-      setErrorMessage(`Server communication error: ${err.message}`);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const handleSelectAll = (checked) => {
-    const updated = {};
-    validationResults.forEach((item, idx) => {
-      if (!item.already_in_processing) {
-        updated[idx] = checked;
-      }
-    });
-    setSelectedPortals(updated);
-  };
-
-  const isAllSelected = () => {
-    const selectableIndices = validationResults
-      .map((item, idx) => (!item.already_in_processing ? idx : null))
-      .filter((i) => i !== null);
-
-    if (selectableIndices.length === 0) return false;
-    return selectableIndices.every((idx) => selectedPortals[idx]);
-  };
-
-  const handleToggleItem = (idx, checked) => {
-    setSelectedPortals((prev) => ({ ...prev, [idx]: checked }));
-  };
-
-  const handleAddToProcessing = async () => {
-    const selectedIndices = Object.keys(selectedPortals).filter((k) => selectedPortals[k]);
-    if (selectedIndices.length === 0) {
-      alert('Please select at least one portal checkbox to add to SCRAPPER_PROCESSING.');
-      return;
-    }
-
-    if (assignToOtherUser && !selectedAgentEmpId) {
-      alert('Please select an agent from the Agent Registry dropdown before adding to SCRAPPER_PROCESSING.');
-      return;
-    }
-
-    const itemsToAdd = selectedIndices.map((idx) => {
-      const item = validationResults[idx];
-      return {
-        portal_id: item.portal_id,
-        city: item.city,
-        state: item.state
-      };
-    });
-
-    setIsAddingToProcessing(true);
-    setStatusMessage(null);
-    setErrorMessage(null);
-
-    try {
-      const payload = { items: itemsToAdd };
-      if (assignToOtherUser && selectedAgentEmpId) {
-        payload.target_emp_id = selectedAgentEmpId;
-      }
-
-      const res = await apiFetch('/api/orchestrate/add-to-processing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        setStatusMessage(data.message);
-        setValidationResults((prev) =>
-          prev.map((item, idx) => {
-            if (selectedPortals[idx]) {
-              return {
-                ...item,
-                status: 'Added to Processing',
-                just_added: true,
-                already_in_processing: true
-              };
-            }
-            return item;
-          })
-        );
-        setSelectedPortals({});
-        if (onRefreshStatus) onRefreshStatus();
-      } else {
-        setErrorMessage(data.error || 'Failed to add selected portals to SCRAPPER_PROCESSING.');
-      }
-    } catch (err) {
-      setErrorMessage(`Error adding to processing: ${err.message}`);
-    } finally {
-      setIsAddingToProcessing(false);
-    }
-  };
+  const {
+    promptInput,
+    setPromptInput,
+    isSearching,
+    isExpanding,
+    validationResults,
+    selectedPortals,
+    assignToOtherUser,
+    setAssignToOtherUser,
+    selectedAgentEmpId,
+    setSelectedAgentEmpId,
+    isAddingToProcessing,
+    statusMessage,
+    errorMessage,
+    llmInfo,
+    handleSearch,
+    handleExpandSearchWithAI,
+    handleSelectAll,
+    isAllSelected,
+    handleToggleItem,
+    handleAddToProcessing
+  } = useCityDiscovery(onRefreshStatus);
 
   const agentOptions = extractAgentOptions(runners);
 
@@ -185,6 +78,8 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
             agentOptions={agentOptions}
             isAddingToProcessing={isAddingToProcessing}
             handleAddToProcessing={handleAddToProcessing}
+            isExpanding={isExpanding}
+            handleExpandSearchWithAI={handleExpandSearchWithAI}
           />
         </div>
       )}
