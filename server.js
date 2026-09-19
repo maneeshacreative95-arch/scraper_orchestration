@@ -685,6 +685,13 @@ function handleWsConnection(ws, req) {
               regItem.execution_id = null;
             }
           }
+
+          // Send ACK to maintain active 2-way WebSocket connection with runner
+          if (ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ event: 'ack', type: 'heartbeat', status: 'ok', timestamp: new Date().toISOString() }));
+            } catch (e) { }
+          }
         }
 
       } else if (eventType === 'progress') {
@@ -697,6 +704,13 @@ function handleWsConnection(ws, req) {
           if (data.portal_id) regItem.portal_id = data.portal_id;
           if (data.execution_id) regItem.execution_id = data.execution_id;
           if (data.category) regItem.current_workflow = data.category;
+        }
+
+        // Send ACK to maintain active 2-way WebSocket connection with runner
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ event: 'ack', type: 'progress', status: 'ok', timestamp: new Date().toISOString() }));
+          } catch (e) { }
         }
 
       } else if (eventType === 'execution_completed') {
@@ -806,14 +820,16 @@ function getConnectedWsRunner(runnerOrAgent) {
   const targetName = runnerOrAgent.agent_name || runnerOrAgent.server_name;
   const targetClientId = parseInt(runnerOrAgent.client_id, 10);
 
-  // 1. Direct match by runner_id or agent_name
+  // 1. Direct or partial match by runner_id or agent_name
   for (const [id, info] of wsConnectedRunners.entries()) {
     if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
       const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
-      if (heartbeatAgeSec > 35) continue; // Ignore stale heartbeats (>35s)
+      if (heartbeatAgeSec > 60) continue; // Ignore stale heartbeats (>60s)
 
-      if ((targetId && (id === targetId || info.runner_id === targetId)) ||
-        (targetName && info.runner_name && info.runner_name.toLowerCase() === targetName.toLowerCase())) {
+      if (
+        (targetId && (id === targetId || info.runner_id === targetId || targetId.includes(id) || id.includes(targetId))) ||
+        (targetName && info.runner_name && (info.runner_name.toLowerCase().includes(targetName.toLowerCase()) || targetName.toLowerCase().includes(info.runner_name.toLowerCase())))
+      ) {
         return info;
       }
     }
@@ -824,21 +840,26 @@ function getConnectedWsRunner(runnerOrAgent) {
     for (const [id, info] of wsConnectedRunners.entries()) {
       if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
         const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
-        if (heartbeatAgeSec <= 35 && info.client_id === targetClientId && (info.status === 'Idle' || info.status === 'idle')) {
+        if (heartbeatAgeSec <= 60 && info.client_id === targetClientId) {
           return info;
         }
       }
     }
   }
 
-  // 3. Fallback: Any active connected and idle WebSocket runner
+  // 3. Fallback: Any active connected WebSocket runner
   for (const [id, info] of wsConnectedRunners.entries()) {
     if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
       const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
-      if (heartbeatAgeSec <= 35 && (info.status === 'Idle' || info.status === 'idle')) {
+      if (heartbeatAgeSec <= 60) {
         return info;
       }
     }
+  }
+
+  return null;
+}
+
   }
 
   return null;
@@ -4209,10 +4230,11 @@ async function monitorEngine() {
     }
   });
 
-  // Clear stale running statuses for disconnected runners
+  // Clear stale running statuses for genuinely disconnected runners (>60s heartbeat age)
   runnerRegistry.forEach(r => {
     const isWsActive = isRunnerConnectedAndActive(r);
-    if (!isWsActive && r.status === 'Running') {
+    const heartbeatAgeSec = r.last_heartbeat ? (now - new Date(r.last_heartbeat)) / 1000 : 999;
+    if (!isWsActive && heartbeatAgeSec > 60 && r.status === 'Running') {
       r.status = 'Idle';
       r.current_workflow = null;
       r.portal_id = null;
@@ -4225,8 +4247,9 @@ async function monitorEngine() {
     let pId = r.portal_id;
     let cityObj = null;
     const isWsActive = isRunnerConnectedAndActive(r);
+    const isRunningState = r.status === 'Running';
 
-    if (isWsActive) {
+    if (isWsActive || isRunningState) {
       if (r.current_workflow) {
         cityObj = cityQueue.find(c => (c.city_name === r.current_workflow || c.assigned_agent === r.agent_name) && c.status === 'Running');
       }
@@ -4247,6 +4270,9 @@ async function monitorEngine() {
       r.current_workflow = null;
       r.portal_id = null;
       r.execution_id = null;
+      pId = null;
+    }
+
       pId = null;
     }
 
