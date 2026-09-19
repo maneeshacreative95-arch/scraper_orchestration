@@ -975,11 +975,15 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
                 rows.find(r => r.LLM_PROVIDER === requestedProvider);
       }
       if (!match) {
-        match = rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') || rows[0];
+        // Preferred Provider Priority: GEMINI -> GROQ -> Any Active Text LLM
+        match = rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER === 'GEMINI' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+                rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER === 'GROQ' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+                rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+                rows[0];
       }
 
       if (match) {
-        let selectedModel = match.MODEL_NAME || process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+        let selectedModel = match.MODEL_NAME || (match.LLM_PROVIDER === 'GEMINI' ? 'gemini-1.5-flash' : 'openai/gpt-oss-20b');
         if (selectedModel.toLowerCase().includes('prompt-guard') || selectedModel.toLowerCase().includes('guard')) {
           selectedModel = 'openai/gpt-oss-20b';
         }
@@ -987,9 +991,9 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
 
         return {
           exists: true,
-          key: match.API_KEY || process.env.GROQ_API_KEY || '',
+          key: match.API_KEY || (match.LLM_PROVIDER === 'GEMINI' ? process.env.GEMINI_API_KEY : process.env.GROQ_API_KEY) || '',
           model: selectedModel,
-          provider: match.LLM_PROVIDER || requestedProvider || 'GROQ',
+          provider: match.LLM_PROVIDER || requestedProvider || 'GEMINI',
           status: match.STATUS || 'INACTIVE',
           isActive: isActive,
           url: match.MODEL_URL
@@ -998,6 +1002,17 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
     }
   } catch (err) {
     console.error('[APIKEY] Error loading active key for user:', userId, 'firm:', firmId, err.message);
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    return {
+      exists: true,
+      key: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+      provider: 'GEMINI',
+      status: 'ACTIVE',
+      isActive: true
+    };
   }
 
   if (process.env.GROQ_API_KEY) {
@@ -1015,7 +1030,7 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
     exists: false,
     key: '',
     model: '',
-    provider: requestedProvider || 'GROQ',
+    provider: requestedProvider || 'GEMINI',
     status: 'INACTIVE',
     isActive: false,
     message: 'No API configured. Please add one in MyBlocks API Key Manager.'
@@ -1072,7 +1087,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
   }
 
   // 2. LLM Discovery: Call LLM/Gemini if prompt term not found in portal database or forceLLM === true
-  const activeKeyObj = await getActiveApiKey(targetUserId, null, targetFirmId);
+  let activeKeyObj = await getActiveApiKey(targetUserId, null, targetFirmId);
 
   if (!activeKeyObj.exists || !activeKeyObj.key) {
     const noKeyMsg = 'No API configured. Please add one in MyBlocks API Key Manager.';
@@ -1086,8 +1101,8 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     throw new Error(inactiveMsg);
   }
 
-  const key = activeKeyObj.key;
-  const provider = (activeKeyObj.provider || 'GROQ').toUpperCase();
+  let key = activeKeyObj.key;
+  let provider = (activeKeyObj.provider || 'GEMINI').toUpperCase();
   let modelName = activeKeyObj.model;
 
   logReallocation(`[LLM DISCOVERY] Using active Provider '${provider}', Model '${modelName}' from DB API_KEY_MANAGER (Force LLM: ${forceLLM}).`);
@@ -1107,33 +1122,48 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
 
       modelName = gModel;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key}`;
-      const geminiRes = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `You are a global location and market intelligence AI. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'.${excludePrompt} Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code e.g. OM for Oman, IN for India, US for USA, UK for UK, AE for UAE, JP for Japan), "district", "zipcode". Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]`
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.3,
-            responseMimeType: 'application/json'
-          }
-        }),
-        signal: AbortSignal.timeout(12000)
-      });
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key}`;
+        const geminiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `You are a global location and market intelligence AI. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'.${excludePrompt} Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code e.g. OM for Oman, IN for India, US for USA, UK for UK, AE for UAE, JP for Japan), "district", "zipcode". Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]`
+              }]
+            }],
+            generationConfig: {
+              temperature: 0.3,
+              responseMimeType: 'application/json'
+            }
+          }),
+          signal: AbortSignal.timeout(12000)
+        });
 
-      if (geminiRes.ok) {
-        const gData = await geminiRes.json();
-        textOut = gData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      } else {
-        const gErr = await geminiRes.text();
-        console.error('[GEMINI API Error]', geminiRes.status, gErr);
-        throw new Error(`Gemini API Error (${geminiRes.status}): ${gErr}`);
+        if (geminiRes.ok) {
+          const gData = await geminiRes.json();
+          textOut = gData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else {
+          const gErr = await geminiRes.text();
+          console.error('[GEMINI API Error]', geminiRes.status, gErr);
+          throw new Error(`Gemini API Error (${geminiRes.status}): ${gErr}`);
+        }
+      } catch (geminiError) {
+        console.warn(`[GEMINI FALLBACK TRIGGERED] Gemini API failed (${geminiError.message}). Attempting Groq fallback...`);
+        const groqKeyObj = await getActiveApiKey(targetUserId, 'GROQ', targetFirmId);
+        if (groqKeyObj && groqKeyObj.exists && groqKeyObj.key) {
+          provider = 'GROQ';
+          key = groqKeyObj.key;
+          modelName = groqKeyObj.model || 'openai/gpt-oss-20b';
+          logReallocation(`[LLM DISCOVERY FALLBACK] Switched to Provider 'GROQ', Model '${modelName}'`);
+        } else {
+          throw geminiError;
+        }
       }
-    } else {
+    }
+
+    if (provider !== 'GEMINI') {
       if (provider === 'GROQ') modelName = await getValidGroqChatModel(key, modelName);
 
       let url = 'https://api.groq.com/openai/v1/chat/completions';
@@ -1177,6 +1207,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
         throw new Error(`${provider} API Error (${llmRes.status}): ${errText}`);
       }
     }
+
 
     if (textOut) {
       const matchJson = textOut.match(/\[[\s\S]*\]/);
