@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import Cookies from 'js-cookie';
 import { apiFetch } from './api/config';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -16,12 +17,6 @@ import {
   AlertTriangle,
   CheckCircle2
 } from 'lucide-react';
-
-function getCookie(name) {
-  if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
-  return match ? decodeURIComponent(match[1]) : null;
-}
 
 export default function App() {
   const [runners, setRunners] = useState([]);
@@ -43,8 +38,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    const userId = getCookie('userid') || getCookie('user_id') || getCookie('empid');
-    const firmId = getCookie('firmid') || getCookie('firm_id') || getCookie('FIRMID');
+    const userId = Cookies.get('userid') || Cookies.get('user_id') || Cookies.get('empid');
+    const firmId = Cookies.get('firmid') || Cookies.get('firm_id') || Cookies.get('FIRMID');
 
     const hostname = window.location.hostname;
     const isProd = hostname.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(hostname));
@@ -62,6 +57,7 @@ export default function App() {
     const interval = setInterval(fetchStatus, 4000);
     return () => clearInterval(interval);
   }, []);
+
 
 
   return (
