@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search } from 'lucide-react';
+import { Search, Key } from 'lucide-react';
 
 export default function DiscoverySearchPanel({
   promptInput,
@@ -10,8 +10,29 @@ export default function DiscoverySearchPanel({
 }) {
   return (
     <div className="panel-card">
-      <div className="panel-header" style={{ marginBottom: '1rem' }}>
+      <div className="panel-header" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <h3>Workflow Discovery (LLM First & Distributed Orchestration)</h3>
+        <a
+          href="https://myblocks.in/api-key-manager"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            fontSize: '0.85rem',
+            color: '#60a5fa',
+            textDecoration: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontWeight: 500,
+            background: 'rgba(59, 130, 246, 0.1)',
+            padding: '6px 12px',
+            borderRadius: '6px',
+            border: '1px solid rgba(59, 130, 246, 0.3)'
+          }}
+        >
+          <Key size={14} />
+          API Key Manager
+        </a>
       </div>
       <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1.25rem' }}>
         Enter a free-text scraping request. The LLM will discover states/cities, estimate business potential, validate against the Portal Database, and schedule parallel batches.
@@ -43,12 +64,12 @@ export default function DiscoverySearchPanel({
           {isSearching ? (
             <>
               <span className="spinner-inline"></span>
-              Searching...
+              Searching Portals...
             </>
           ) : (
             <>
               <Search size={18} />
-              Analyze & Orchestrate
+              Search Portals
             </>
           )}
         </button>
@@ -56,3 +77,4 @@ export default function DiscoverySearchPanel({
     </div>
   );
 }
+
