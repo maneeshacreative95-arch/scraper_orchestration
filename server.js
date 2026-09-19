@@ -1123,22 +1123,20 @@ Example JSON: [{"state":"Tamil Nadu","city":"Manali (Thuckalay)","approx_busines
     let textOut = '';
 
     if (provider === 'GEMINI') {
-      let gModel = (modelName || 'gemini-1.5-flash').toLowerCase();
-      if (gModel === 'gemini-1.5' || gModel === 'gemini-1.5-flash') gModel = 'gemini-1.5-flash';
-      else if (gModel === 'gemini-2.0' || gModel === 'gemini-2.0-flash') gModel = 'gemini-2.0-flash';
-      else if (gModel.includes('3.7')) gModel = 'gemini-2.5-flash';
+      let rawDbModel = (modelName || 'gemini-1.5-flash').trim().toLowerCase();
+      let gModel = rawDbModel;
+      if (gModel === 'gemini-1.5') gModel = 'gemini-1.5-flash';
+      else if (gModel === 'gemini-2.0') gModel = 'gemini-2.0-flash';
 
       modelName = gModel;
 
-      try {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key}`;
-        const geminiRes = await fetch(geminiUrl, {
+      const fetchGemini = async (targetModel) => {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${key}`;
+        return await fetch(geminiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{
-              parts: [{ text: promptInstruction }]
-            }],
+            contents: [{ parts: [{ text: promptInstruction }] }],
             generationConfig: {
               temperature: 0.3,
               responseMimeType: 'application/json'
@@ -1146,6 +1144,17 @@ Example JSON: [{"state":"Tamil Nadu","city":"Manali (Thuckalay)","approx_busines
           }),
           signal: AbortSignal.timeout(12000)
         });
+      };
+
+      try {
+        let geminiRes = await fetchGemini(modelName);
+
+        // Auto-retry with gemini-1.5-flash if DB model name returns 404 (model deprecated / unavailable)
+        if (!geminiRes.ok && geminiRes.status === 404 && modelName !== 'gemini-1.5-flash') {
+          console.warn(`[GEMINI MODEL RETRY] DB model '${modelName}' returned 404. Retrying with 'gemini-1.5-flash'...`);
+          modelName = 'gemini-1.5-flash';
+          geminiRes = await fetchGemini(modelName);
+        }
 
         if (geminiRes.ok) {
           const gData = await geminiRes.json();
@@ -1168,6 +1177,7 @@ Example JSON: [{"state":"Tamil Nadu","city":"Manali (Thuckalay)","approx_busines
         }
       }
     }
+
 
     if (provider !== 'GEMINI') {
       if (provider === 'GROQ') modelName = await getValidGroqChatModel(key, modelName);
