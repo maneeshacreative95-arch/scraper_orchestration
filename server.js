@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors');
+
 const path = require('path');
 const fs = require('fs');
 const fsClassic = fs;
@@ -104,30 +104,29 @@ async function poolQuery(sql, params = []) {
 }
 
 // CORS Configuration & Headers
-const corsOptions = {
-  origin: true, // Allow all requesting origins dynamically
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['*'],
-  exposedHeaders: ['*'],
-  optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
-
+// Using manual CORS middleware to properly echo back Access-Control-Request-Headers.
+// Note: cors() package does NOT support allowedHeaders:'*' with credentials:true (browsers reject it).
 app.use((req, res, next) => {
-  const origin = req.headers.origin || '*';
-  const reqHeaders = req.headers['access-control-request-headers'] || '*';
-  res.header('Access-Control-Allow-Origin', origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', reqHeaders);
+
+  // Echo back whatever headers the browser is requesting permission for
+  const requestedHeaders = req.headers['access-control-request-headers'];
+  if (requestedHeaders) {
+    res.header('Access-Control-Allow-Headers', requestedHeaders);
+  } else {
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, x-client-id, x-user-id, x-session-token, x-firm-id, x-role, x-admin, x-admin-user');
+  }
 
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
 
+  // Respond immediately to all preflight OPTIONS requests
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -553,6 +552,7 @@ function logReallocationEvent(eventData) {
 
 // WebSocket Live Runner Registry Connection Manager
 const wsConnectedRunners = new Map(); // runner_id -> { ws, runner_id, runner_name, client_id, server_ip, port, connected_at, last_heartbeat, status }
+const disconnectTimers = new Map(); // runner_id -> setTimeout handle (grace period before marking Disconnected)
 
 function handleWsConnection(ws, req) {
   const clientIp = req.socket.remoteAddress || '127.0.0.1';
@@ -592,6 +592,13 @@ function handleWsConnection(ws, req) {
         }
 
         authenticatedRunnerId = runnerId;
+
+        // Cancel any pending 'Disconnected' status timer if runner quickly reconnected
+        if (disconnectTimers.has(runnerId)) {
+          clearTimeout(disconnectTimers.get(runnerId));
+          disconnectTimers.delete(runnerId);
+          console.log(`[WEBSOCKET REGISTER] Runner '${runnerId}' reconnected — cancelled pending disconnect timer.`);
+        }
 
         const runnerVersion = data.version;
 
@@ -812,12 +819,30 @@ function handleWsConnection(ws, req) {
     }
   });
 
+  // Track pending disconnect timers to cancel if runner quickly reconnects
   ws.on('close', () => {
     if (authenticatedRunnerId) {
-      console.log(`[WEBSOCKET DISCONNECT] Runner '${authenticatedRunnerId}' disconnected.`);
+      console.log(`[WEBSOCKET DISCONNECT] Runner '${authenticatedRunnerId}' disconnected. Waiting 30s grace period before marking Disconnected.`);
       wsConnectedRunners.delete(authenticatedRunnerId);
-      const regItem = runnerRegistry.find(r => r.runner_id === authenticatedRunnerId);
-      if (regItem) regItem.status = 'Disconnected';
+
+      // Cancel any previous pending timer for this runner
+      if (disconnectTimers.has(authenticatedRunnerId)) {
+        clearTimeout(disconnectTimers.get(authenticatedRunnerId));
+      }
+
+      // Delay Disconnected status to avoid flicker on brief WS drops
+      const timerId = setTimeout(() => {
+        disconnectTimers.delete(authenticatedRunnerId);
+        // Only mark Disconnected if runner didn't reconnect in the meantime
+        if (!wsConnectedRunners.has(authenticatedRunnerId)) {
+          const regItem = runnerRegistry.find(r => r.runner_id === authenticatedRunnerId);
+          if (regItem && regItem.status !== 'Idle' && regItem.status !== 'Offline') {
+            regItem.status = 'Disconnected';
+            console.log(`[WEBSOCKET DISCONNECT] Runner '${authenticatedRunnerId}' marked as Disconnected after 30s grace period.`);
+          }
+        }
+      }, 30000); // 30-second grace period
+      disconnectTimers.set(authenticatedRunnerId, timerId);
     }
   });
 
