@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { apiFetch } from '../../api/config';
+import { getAuthContext } from '../../utils/auth';
 
 export function useCityDiscovery(onRefreshStatus) {
   const [promptInput, setPromptInput] = useState('');
@@ -13,6 +14,9 @@ export function useCityDiscovery(onRefreshStatus) {
   const [statusMessage, setStatusMessage] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   const [llmInfo, setLlmInfo] = useState({ provider: 'GROQ', model: 'openai/gpt-oss-20b' });
+
+  // Password prompt state for cross-user assignment
+  const [pendingAssignPrompt, setPendingAssignPrompt] = useState({ isOpen: false, targetEmpId: null });
 
   const handleSearch = async (e) => {
     e?.preventDefault();
@@ -114,7 +118,7 @@ export function useCityDiscovery(onRefreshStatus) {
     setSelectedPortals((prev) => ({ ...prev, [idx]: checked }));
   };
 
-  const handleAddToProcessing = async () => {
+  const handleAddToProcessing = async (superadminPassword = null) => {
     const selectedIndices = Object.keys(selectedPortals).filter((k) => selectedPortals[k]);
     if (selectedIndices.length === 0) {
       alert('Please select at least one portal checkbox to add to SCRAPPER_PROCESSING.');
@@ -123,6 +127,18 @@ export function useCityDiscovery(onRefreshStatus) {
 
     if (assignToOtherUser && !selectedAgentEmpId) {
       alert('Please select an agent from the Agent Registry dropdown before adding to SCRAPPER_PROCESSING.');
+      return;
+    }
+
+    const { userId } = getAuthContext();
+    const currentUserId = String(userId || '919').trim();
+    const isAssigningToOther = assignToOtherUser && selectedAgentEmpId && String(selectedAgentEmpId).trim() !== currentUserId;
+
+    if (isAssigningToOther && !superadminPassword) {
+      setPendingAssignPrompt({
+        isOpen: true,
+        targetEmpId: selectedAgentEmpId
+      });
       return;
     }
 
@@ -143,6 +159,9 @@ export function useCityDiscovery(onRefreshStatus) {
       const payload = { items: itemsToAdd };
       if (assignToOtherUser && selectedAgentEmpId) {
         payload.target_emp_id = selectedAgentEmpId;
+      }
+      if (superadminPassword) {
+        payload.superadmin_password = superadminPassword;
       }
 
       const res = await apiFetch('/api/orchestrate/add-to-processing', {
@@ -168,12 +187,20 @@ export function useCityDiscovery(onRefreshStatus) {
           })
         );
         setSelectedPortals({});
+        setPendingAssignPrompt({ isOpen: false, targetEmpId: null });
         if (onRefreshStatus) onRefreshStatus();
       } else {
-        setErrorMessage(data.error || 'Failed to add selected portals to SCRAPPER_PROCESSING.');
+        const errText = data.error || 'Failed to add selected portals to SCRAPPER_PROCESSING.';
+        setErrorMessage(errText);
+        if (superadminPassword) {
+          throw new Error(errText);
+        }
       }
     } catch (err) {
       setErrorMessage(`Error adding to processing: ${err.message}`);
+      if (superadminPassword) {
+        throw err;
+      }
     } finally {
       setIsAddingToProcessing(false);
     }
@@ -194,6 +221,8 @@ export function useCityDiscovery(onRefreshStatus) {
     statusMessage,
     errorMessage,
     llmInfo,
+    pendingAssignPrompt,
+    setPendingAssignPrompt,
     handleSearch,
     handleExpandSearchWithAI,
     handleSelectAll,

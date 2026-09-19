@@ -4,6 +4,7 @@ import PortalValidationTable from './city-discovery/PortalValidationTable';
 import UserAssignmentBar from './city-discovery/UserAssignmentBar';
 import { extractAgentOptions } from './city-discovery/helpers';
 import { useCityDiscovery } from './city-discovery/useCityDiscovery';
+import PasswordModal from '../components/PasswordModal';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function CityDiscovery({ runners = [], onRefreshStatus }) {
@@ -22,6 +23,8 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
     statusMessage,
     errorMessage,
     llmInfo,
+    pendingAssignPrompt,
+    setPendingAssignPrompt,
     handleSearch,
     handleExpandSearchWithAI,
     handleSelectAll,
@@ -31,6 +34,8 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
   } = useCityDiscovery(onRefreshStatus);
 
   const agentOptions = extractAgentOptions(runners);
+
+  const selectedAgentLabel = agentOptions.find(opt => String(opt.value) === String(selectedAgentEmpId))?.label || `Client ${selectedAgentEmpId}`;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -83,6 +88,16 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
           />
         </div>
       )}
+
+      <PasswordModal
+        isOpen={pendingAssignPrompt.isOpen}
+        onClose={() => setPendingAssignPrompt({ isOpen: false, targetEmpId: null })}
+        onConfirm={async (password) => {
+          await handleAddToProcessing(password);
+        }}
+        actionType="assign portals to"
+        runnerName={selectedAgentLabel}
+      />
     </div>
   );
 }

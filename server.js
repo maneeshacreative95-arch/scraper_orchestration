@@ -2929,7 +2929,7 @@ app.post('/api/orchestrate/full-workflow', async (req, res) => {
 // Endpoint to manually add selected portals to SCRAPPER_PROCESSING (with duplicate checking)
 app.post('/api/orchestrate/add-to-processing', async (req, res) => {
   console.log('[ADD TO PROCESSING] Request received:', JSON.stringify(req.body));
-  const { items, target_emp_id, emp_id } = req.body || {};
+  const { items, target_emp_id, emp_id, superadmin_password } = req.body || {};
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     console.log('[ADD TO PROCESSING] Bad request: items missing or empty');
@@ -2937,6 +2937,13 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
   }
 
   const empId = target_emp_id || emp_id || req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
+
+  if (target_emp_id && String(target_emp_id).trim() !== String(req.clientId).trim()) {
+    if (superadmin_password !== SUPERADMIN_PASSWORD) {
+      return res.status(403).json({ success: false, error: 'Superadmin password required to assign portals to another user.' });
+    }
+  }
+
   let addedCount = 0;
   let blockedItems = [];
   let connection;
