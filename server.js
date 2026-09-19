@@ -508,7 +508,23 @@ async function dispatchNextQueuedBatch(runnerId) {
   const queuedBatch = cityQueue.find(c => (c.assigned_agent === runnerId || c.assigned_agent === regItem?.agent_name) && (c.status === 'Queued' || c.status === 'Pending')) ||
     cityQueue.find(c => (c.status === 'Queued' || c.status === 'Pending') && (c.client_id || 1572) === rClientId);
 
-  if (!queuedBatch) return;
+  if (!queuedBatch) {
+    // If no batch in cityQueue, check if there are PENDING or CANCELLED tasks in SCRAPPER_PROCESSING
+    try {
+      const [pendingTasks] = await dbPool.query(
+        `SELECT SP_ID FROM SCRAPPER_PROCESSING WHERE STATUS IN ('PENDING', 'CANCELLED') AND EMP_ID = ? LIMIT 1`,
+        [rClientId]
+      );
+      if (pendingTasks && pendingTasks.length > 0) {
+        console.log(`[CONCURRENCY DISPATCH] Found pending/cancelled SCRAPPER_PROCESSING task for runner '${runnerId}'. Triggering start_execution.`);
+        const wsRunner = wsConnectedRunners.get(runnerId);
+        if (wsRunner && wsRunner.ws && wsRunner.ws.readyState === 1) {
+          wsRunner.ws.send(JSON.stringify({ event: 'start_execution', runner_id: runnerId }));
+        }
+      }
+    } catch (e) { }
+    return;
+  }
 
   const targetAgent = agents.find(a => a.agent_id === runnerId || a.agent_name === regItem?.agent_name) || agents.find(a => a.status === 'Idle');
 
@@ -1513,12 +1529,19 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
 
         try {
           const [spRows] = await connection.query(
-            `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING WHERE PORTALID = ? LIMIT 1`,
+            `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING 
+             WHERE PORTALID = ? 
+             ORDER BY CASE 
+               WHEN STATUS IN ('PROCESSING', 'PENDING', 'CANCELLED') THEN 1 
+               WHEN STATUS IN ('DONE', 'COMPLETED') THEN 2 
+               ELSE 3 
+             END, UPDATE_DTM DESC LIMIT 1`,
             [portalId]
           );
           if (spRows && spRows.length > 0) {
             const spStatus = String(spRows[0].STATUS).toUpperCase();
-            if (spStatus !== 'FAILED' && spStatus !== 'CANCELLED') {
+            // CANCELLED must be considered as PENDING - cannot be allocated to others
+            if (spStatus !== 'FAILED') {
               alreadyInProcessing = true;
               existingEmpId = spRows[0].EMP_ID;
             }
@@ -3000,14 +3023,22 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
       console.log(`[ADD TO PROCESSING] Checking portalId: ${portalId}, portalName: ${portalName}`);
 
       const [existing] = await connection.query(
-        `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING WHERE PORTALID = ? LIMIT 1`,
+        `SELECT SP_ID, EMP_ID, STATUS FROM SCRAPPER_PROCESSING 
+         WHERE PORTALID = ? 
+         ORDER BY CASE 
+           WHEN STATUS IN ('PROCESSING', 'PENDING', 'CANCELLED') THEN 1 
+           WHEN STATUS IN ('DONE', 'COMPLETED') THEN 2 
+           ELSE 3 
+         END, UPDATE_DTM DESC LIMIT 1`,
         [portalId]
       );
 
       if (existing && existing.length > 0) {
         const currentStatus = String(existing[0].STATUS).toUpperCase();
-        if (currentStatus === 'FAILED' || currentStatus === 'CANCELLED') {
-          console.log(`[ADD TO PROCESSING] Portal ${portalId} exists with status '${currentStatus}'. Updating status to PENDING and EMP_ID to ${empId}`);
+        const isSameUser = String(existing[0].EMP_ID) === String(empId);
+
+        if (currentStatus === 'FAILED') {
+          console.log(`[ADD TO PROCESSING] Portal ${portalId} exists with status 'FAILED'. Updating status to PENDING and EMP_ID to ${empId}`);
           await connection.query(
             `UPDATE SCRAPPER_PROCESSING 
              SET STATUS = 'PENDING', EMP_ID = ?, UPDATE_DTM = NOW() 
@@ -3015,8 +3046,17 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
             [empId, existing[0].SP_ID]
           );
           addedCount++;
+        } else if (currentStatus === 'CANCELLED' && isSameUser) {
+          console.log(`[ADD TO PROCESSING] Portal ${portalId} exists with status 'CANCELLED' for same user ${empId}. Resetting status to PENDING.`);
+          await connection.query(
+            `UPDATE SCRAPPER_PROCESSING 
+             SET STATUS = 'PENDING', UPDATE_DTM = NOW() 
+             WHERE SP_ID = ?`,
+            [existing[0].SP_ID]
+          );
+          addedCount++;
         } else {
-          console.log(`[ADD TO PROCESSING] Portal ${portalId} already exists in active status '${currentStatus}' (EMP_ID: ${existing[0].EMP_ID})`);
+          console.log(`[ADD TO PROCESSING] Portal ${portalId} already exists in status '${currentStatus}' (EMP_ID: ${existing[0].EMP_ID}). Blocked from allocation.`);
           blockedItems.push({ portal_id: portalId, city: portalName, emp_id: existing[0].EMP_ID, status: currentStatus });
         }
       } else {
@@ -3254,6 +3294,24 @@ app.post('/api/runners/start', async (req, res) => {
   }
 
   const runnerClientId = runner.client_id || 1572;
+
+  // When user clicks start: CANCELLED tasks for this employee are considered part of the active queue.
+  // Reset CANCELLED tasks to PENDING so the runner immediately picks them up and transitions them to PROCESSING.
+  try {
+    const [cRes] = await dbPool.query(
+      `UPDATE SCRAPPER_PROCESSING 
+       SET STATUS = 'PENDING', UPDATE_DTM = NOW() 
+       WHERE STATUS = 'CANCELLED' AND EMP_ID = ?`,
+      [runnerClientId]
+    );
+    if (cRes.affectedRows > 0) {
+      console.log(`[RUNNER START] Reset ${cRes.affectedRows} CANCELLED task(s) to PENDING in SCRAPPER_PROCESSING for Employee ID ${runnerClientId}`);
+      logReallocation(`[RUNNER START] Reset ${cRes.affectedRows} CANCELLED task(s) to PENDING for Employee ID ${runnerClientId}.`);
+    }
+  } catch (dbErr) {
+    console.error('[RUNNER START DB ERROR]', dbErr.message);
+  }
+
   const targetCity = cityQueue.find(c => (c.assigned_agent === runner.agent_name || c.assigned_agent === runner.runner_id) && (c.status === 'Queued' || c.status === 'Pending'))
     || cityQueue.find(c => (c.status === 'Queued' || c.status === 'Pending') && (c.client_id || 1572) === runnerClientId);
 
