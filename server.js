@@ -352,8 +352,9 @@ function extractClientContext(req, res, next) {
   const queryFirmId = req.query.firm_id || req.query.firmid;
   const bodyFirmId = req.body?.firm_id || req.body?.firmid || req.body?.FIRMID;
 
-  // Extract 'userid' and 'adminuser' from incoming request cookies
+  // Extract 'userid', 'firmid', and 'adminuser' from incoming request cookies
   let cookieUserId = null;
+  let cookieFirmId = null;
   let isCookieAdmin = false;
   if (req.headers.cookie) {
     const match = req.headers.cookie.match(/(?:^|;\s*)(?:userid|user_id|client_id)=([^;]+)/i);
@@ -361,6 +362,14 @@ function extractClientContext(req, res, next) {
       const parsed = parseInt(decodeURIComponent(match[1]), 10);
       if (!isNaN(parsed) && parsed > 0) {
         cookieUserId = parsed;
+      }
+    }
+
+    const firmMatch = req.headers.cookie.match(/(?:^|;\s*)(?:firmid|firm_id|FIRMID)=([^;]+)/i);
+    if (firmMatch) {
+      const parsedFirm = parseInt(decodeURIComponent(firmMatch[1]), 10);
+      if (!isNaN(parsedFirm) && parsedFirm > 0) {
+        cookieFirmId = parsedFirm;
       }
     }
 
@@ -392,7 +401,8 @@ function extractClientContext(req, res, next) {
   }
 
   req.clientId = targetClientId;
-  req.firmId = parseInt(headerFirmId || queryFirmId || bodyFirmId || defaultScraperConfig.firm_id || 5, 10);
+  req.firmId = parseInt(headerFirmId || cookieFirmId || queryFirmId || bodyFirmId || defaultScraperConfig.firm_id || 5, 10);
+
   req.isAdmin = isAdmin;
 
   // Security Rule: Enforce HTTP 403 Forbidden if non-admin attempts unauthorized cross-client access
