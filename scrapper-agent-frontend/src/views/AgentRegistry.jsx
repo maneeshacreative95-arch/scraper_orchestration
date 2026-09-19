@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../api/config';
 import AddRunnerForm from './agent-registry/AddRunnerForm';
 import RunnerTable from './agent-registry/RunnerTable';
 import { Plus } from 'lucide-react';
@@ -19,7 +20,7 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
 
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/runners/add', {
+      const res = await apiFetch('/api/runners/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server_name: serverName, host_ip: hostIp, agent_name: agentName })
@@ -43,7 +44,7 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
 
   const handleStartRunner = async (runnerId) => {
     try {
-      const res = await fetch('/api/runners/start', {
+      const res = await apiFetch('/api/runners/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ runner_id: runnerId })
@@ -58,7 +59,7 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
 
   const handleStopRunner = async (runnerId) => {
     try {
-      const res = await fetch('/api/runners/stop', {
+      const res = await apiFetch('/api/runners/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ runner_id: runnerId })
@@ -74,7 +75,7 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
   const handleDeleteRunner = async (runnerId) => {
     if (!confirm(`Delete runner ${runnerId}?`)) return;
     try {
-      const res = await fetch(`/api/runners/${runnerId}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/runners/${runnerId}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) alert(data.error || 'Failed to delete runner');
       if (onRefreshStatus) onRefreshStatus();

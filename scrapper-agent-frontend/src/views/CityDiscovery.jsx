@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apiFetch } from '../api/config';
 import DiscoverySearchPanel from './city-discovery/DiscoverySearchPanel';
 import PortalValidationTable from './city-discovery/PortalValidationTable';
 import UserAssignmentBar from './city-discovery/UserAssignmentBar';
@@ -25,7 +26,7 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
     setErrorMessage(null);
 
     try {
-      const res = await fetch('/api/orchestrate/full-workflow', {
+      const res = await apiFetch('/api/orchestrate/full-workflow', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: promptInput })
@@ -101,7 +102,7 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
         payload.target_emp_id = selectedAgentEmpId;
       }
 
-      const res = await fetch('/api/orchestrate/add-to-processing', {
+      const res = await apiFetch('/api/orchestrate/add-to-processing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
