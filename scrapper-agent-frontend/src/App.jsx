@@ -17,6 +17,12 @@ import {
   CheckCircle2
 } from 'lucide-react';
 
+function getCookie(name) {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export default function App() {
   const [runners, setRunners] = useState([]);
   const [sessionUser, setSessionUser] = useState('MyBlocks Client (919)');
@@ -37,10 +43,26 @@ export default function App() {
   };
 
   useEffect(() => {
+    const userId = getCookie('userid') || getCookie('user_id') || getCookie('empid');
+    const firmId = getCookie('firmid') || getCookie('firm_id') || getCookie('FIRMID');
+
+    const hostname = window.location.hostname;
+    const isProd = hostname.includes('myblocks.in') || (!['localhost', '127.0.0.1'].includes(hostname));
+
+    if (isProd && (!userId || !firmId)) {
+      window.location.href = 'https://myblocks.in/login';
+      return;
+    }
+
+    if (userId) {
+      setSessionUser(`MyBlocks User (${userId})`);
+    }
+
     fetchStatus();
     const interval = setInterval(fetchStatus, 4000);
     return () => clearInterval(interval);
   }, []);
+
 
   return (
     <div className="app-layout">

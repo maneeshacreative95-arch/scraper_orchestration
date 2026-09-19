@@ -26,5 +26,14 @@ export async function apiFetch(endpoint, options = {}) {
     ? endpoint
     : `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
-  return fetch(fullUrl, options);
+  const fetchOptions = {
+    credentials: 'include',
+    ...options,
+    headers: {
+      ...options.headers
+    }
+  };
+
+  return fetch(fullUrl, fetchOptions);
 }
+
