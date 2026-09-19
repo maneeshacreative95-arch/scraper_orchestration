@@ -551,6 +551,14 @@ function handleWsConnection(ws, req) {
       const data = JSON.parse(messageStr);
       const eventType = data.event || data.type || data.action;
 
+      const activeRunnerId = data.runner_id || authenticatedRunnerId;
+      if (activeRunnerId) {
+        const clientObj = wsConnectedRunners.get(activeRunnerId);
+        if (clientObj) clientObj.last_heartbeat = new Date();
+        const regItem = runnerRegistry.find(r => r.runner_id === activeRunnerId);
+        if (regItem) regItem.last_heartbeat = new Date();
+      }
+
       if (eventType === 'register') {
         let runnerId = data.runner_id || `runner_${data.client_id || '1572'}`;
         const parsedClientId = parseInt(data.client_id, 10) || 1572;
@@ -698,8 +706,15 @@ function handleWsConnection(ws, req) {
         const runnerId = data.runner_id || authenticatedRunnerId;
         console.log(`[WEBSOCKET PROGRESS] Runner '${runnerId}': Category '${data.category || '-'}', Status '${data.status || '-'}', ExecID '${data.execution_id || '-'}'`);
 
+        if (runnerId && wsConnectedRunners.has(runnerId)) {
+          const clientObj = wsConnectedRunners.get(runnerId);
+          clientObj.last_heartbeat = new Date();
+          clientObj.status = 'Running';
+        }
+
         const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
         if (regItem) {
+          regItem.last_heartbeat = new Date();
           regItem.status = 'Running';
           if (data.portal_id) regItem.portal_id = data.portal_id;
           if (data.execution_id) regItem.execution_id = data.execution_id;
@@ -4193,7 +4208,8 @@ async function monitorEngine() {
     // Keep active registered runners online with fresh heartbeats
     if (r.status === 'Running' && r.last_heartbeat) {
       const elapsedSec = Math.round((now - new Date(r.last_heartbeat)) / 1000);
-      if (elapsedSec > 15) { // 15 seconds heartbeat timeout
+      const isWsActive = isRunnerConnectedAndActive(r);
+      if (elapsedSec > 60 && !isWsActive) { // 60 seconds heartbeat timeout only if WS inactive
         r.status = 'Offline';
         const city = cityQueue.find(c => c.assigned_agent === r.agent_name && c.status === 'Running');
         if (city) {
