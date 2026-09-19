@@ -3,6 +3,7 @@ import { apiFetch } from '../api/config';
 import DiscoverySearchPanel from './city-discovery/DiscoverySearchPanel';
 import PortalValidationTable from './city-discovery/PortalValidationTable';
 import UserAssignmentBar from './city-discovery/UserAssignmentBar';
+import { extractAgentOptions } from './city-discovery/helpers';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function CityDiscovery({ runners = [], onRefreshStatus }) {
@@ -111,7 +112,20 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
 
       if (res.ok && data.success) {
         setStatusMessage(data.message);
-        handleSearch();
+        setValidationResults((prev) =>
+          prev.map((item, idx) => {
+            if (selectedPortals[idx]) {
+              return {
+                ...item,
+                status: 'Added to Processing',
+                just_added: true,
+                already_in_processing: true
+              };
+            }
+            return item;
+          })
+        );
+        setSelectedPortals({});
         if (onRefreshStatus) onRefreshStatus();
       } else {
         setErrorMessage(data.error || 'Failed to add selected portals to SCRAPPER_PROCESSING.');
@@ -123,21 +137,7 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
     }
   };
 
-  const agentOptions = Array.from(
-    new Map(
-      runners.map((r) => {
-        let empId = r.client_id || r.emp_id;
-        if (!empId && r.runner_id && r.runner_id.startsWith('runner_')) {
-          const parts = r.runner_id.split('_');
-          if (parts[1] && !isNaN(parseInt(parts[1], 10))) empId = parseInt(parts[1], 10);
-        }
-        if (!empId) empId = 1572;
-
-        const displayName = r.agent_name || r.server_name || `Runner ${r.runner_id || ''}`;
-        return [empId, { empId, displayName }];
-      })
-    ).values()
-  );
+  const agentOptions = extractAgentOptions(runners);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>

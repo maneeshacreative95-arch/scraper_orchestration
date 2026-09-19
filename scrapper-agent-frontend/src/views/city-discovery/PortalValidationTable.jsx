@@ -32,10 +32,15 @@ export default function PortalValidationTable({
         <tbody>
           {validationResults.map((res, idx) => {
             const isBlocked = res.already_in_processing;
+            const isJustAdded = res.just_added || res.status === 'Added to Processing';
+            
             let badgeClass = 'badge-pending';
             let statusText = res.status;
 
-            if (isBlocked) {
+            if (isJustAdded) {
+              badgeClass = 'badge-running';
+              statusText = 'Added to Processing';
+            } else if (isBlocked) {
               badgeClass = 'badge-failed';
               statusText = 'Already in Processing';
             } else if (res.status === 'Completed') {
@@ -45,13 +50,19 @@ export default function PortalValidationTable({
             }
 
             return (
-              <tr key={idx} style={{ opacity: isBlocked ? 0.7 : 1 }}>
+              <tr key={idx} style={{ opacity: isBlocked && !isJustAdded ? 0.7 : 1 }}>
                 <td style={{ textAlign: 'center' }}>
                   <Checkbox
                     checked={Boolean(selectedPortals[idx])}
-                    disabled={isBlocked}
+                    disabled={isBlocked || isJustAdded}
                     onChange={(checked) => handleToggleItem(idx, checked)}
-                    title={isBlocked ? `Portal '${res.city}' is already in SCRAPPER_PROCESSING. Contact admin.` : ''}
+                    title={
+                      isJustAdded
+                        ? `Portal '${res.city}' was successfully added to SCRAPPER_PROCESSING.`
+                        : isBlocked
+                        ? `Portal '${res.city}' is already in SCRAPPER_PROCESSING. Contact admin.`
+                        : ''
+                    }
                   />
                 </td>
                 <td><strong>{res.state}</strong></td>
