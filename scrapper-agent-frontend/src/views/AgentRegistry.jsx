@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { apiFetch } from '../api/config';
+import { getAuthContext } from '../utils/auth';
 import AddRunnerForm from './agent-registry/AddRunnerForm';
 import RunnerTable from './agent-registry/RunnerTable';
+import PasswordModal from '../components/PasswordModal';
 import { Plus } from 'lucide-react';
 
 export default function AgentRegistry({ runners = [], onRefreshStatus }) {
@@ -10,6 +12,23 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
   const [hostIp, setHostIp] = useState('');
   const [agentName, setAgentName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // State for superadmin password modal prompt
+  const [pendingAction, setPendingAction] = useState(null); // { actionType, runnerId, runnerName }
+
+  const isOtherPersonRunner = (runner) => {
+    if (!runner) return false;
+    const { userId } = getAuthContext();
+    const currentUserId = String(userId || '919').trim();
+
+    let runnerClientId = runner.client_id !== undefined && runner.client_id !== null ? String(runner.client_id).trim() : null;
+    if (!runnerClientId) {
+      const match = (runner.agent_name || runner.runner_id || runner.server_name || '').match(/(\d+)/);
+      if (match && match[1]) runnerClientId = match[1];
+    }
+
+    return Boolean(runnerClientId && runnerClientId !== currentUserId);
+  };
 
   const handleAddRunner = async (e) => {
     e.preventDefault();
@@ -42,46 +61,95 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
     }
   };
 
+  const executeRunnerAction = async (actionType, runnerId, superadminPassword = null) => {
+    let endpoint = `/api/runners/${actionType}`;
+    let method = 'POST';
+    let bodyData = { runner_id: runnerId };
+
+    if (superadminPassword) {
+      bodyData.superadmin_password = superadminPassword;
+    }
+
+    if (actionType === 'delete') {
+      endpoint = '/api/runners/delete';
+    }
+
+    const res = await apiFetch(endpoint, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(superadminPassword ? { 'x-superadmin-password': superadminPassword } : {})
+      },
+      body: JSON.stringify(bodyData)
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `Failed to ${actionType} runner`);
+    }
+
+    if (onRefreshStatus) onRefreshStatus();
+    return data;
+  };
+
   const handleStartRunner = async (runnerId) => {
-    try {
-      const res = await apiFetch('/api/runners/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runner_id: runnerId })
+    const runner = runners.find(r => r.runner_id === runnerId);
+    if (runner && isOtherPersonRunner(runner)) {
+      setPendingAction({
+        actionType: 'start',
+        runnerId,
+        runnerName: runner.server_name || runner.agent_name || runnerId
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) alert(data.error || 'Failed to start runner');
-      if (onRefreshStatus) onRefreshStatus();
+      return;
+    }
+
+    try {
+      await executeRunnerAction('start', runnerId);
     } catch (e) {
       alert('Error starting runner: ' + e.message);
     }
   };
 
   const handleStopRunner = async (runnerId) => {
-    try {
-      const res = await apiFetch('/api/runners/stop', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runner_id: runnerId })
+    const runner = runners.find(r => r.runner_id === runnerId);
+    if (runner && isOtherPersonRunner(runner)) {
+      setPendingAction({
+        actionType: 'stop',
+        runnerId,
+        runnerName: runner.server_name || runner.agent_name || runnerId
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) alert(data.error || 'Failed to stop runner');
-      if (onRefreshStatus) onRefreshStatus();
+      return;
+    }
+
+    try {
+      await executeRunnerAction('stop', runnerId);
     } catch (e) {
       alert('Error stopping runner: ' + e.message);
     }
   };
 
   const handleDeleteRunner = async (runnerId) => {
+    const runner = runners.find(r => r.runner_id === runnerId);
+    if (runner && isOtherPersonRunner(runner)) {
+      setPendingAction({
+        actionType: 'delete',
+        runnerId,
+        runnerName: runner.server_name || runner.agent_name || runnerId
+      });
+      return;
+    }
+
     if (!confirm(`Delete runner ${runnerId}?`)) return;
     try {
-      const res = await apiFetch(`/api/runners/${runnerId}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok || !data.success) alert(data.error || 'Failed to delete runner');
-      if (onRefreshStatus) onRefreshStatus();
+      await executeRunnerAction('delete', runnerId);
     } catch (e) {
       alert('Error deleting runner: ' + e.message);
     }
+  };
+
+  const handleModalConfirm = async (password) => {
+    if (!pendingAction) return;
+    await executeRunnerAction(pendingAction.actionType, pendingAction.runnerId, password);
   };
 
   return (
@@ -120,6 +188,14 @@ export default function AgentRegistry({ runners = [], onRefreshStatus }) {
           handleDeleteRunner={handleDeleteRunner}
         />
       </div>
+
+      <PasswordModal
+        isOpen={Boolean(pendingAction)}
+        onClose={() => setPendingAction(null)}
+        onConfirm={handleModalConfirm}
+        actionType={pendingAction?.actionType}
+        runnerName={pendingAction?.runnerName}
+      />
     </div>
   );
 }

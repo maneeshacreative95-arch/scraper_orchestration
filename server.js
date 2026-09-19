@@ -434,6 +434,28 @@ let errorHistory = [];
 let performanceMatrix = [];
 let allocationEngineActive = true; // State of the allocation loop (Pause / Resume)
 
+// Superadmin Password Protection for Cross-User Entry Control/Deletion
+const SUPERADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD || 'mulan123';
+
+function isOtherUserRunner(runner, requestingClientId) {
+  if (!runner) return false;
+  const currentIdStr = requestingClientId !== undefined && requestingClientId !== null ? String(requestingClientId).trim() : '';
+  if (!currentIdStr) return false;
+
+  const runnerClientId = runner.client_id !== undefined && runner.client_id !== null ? String(runner.client_id).trim() : '';
+
+  if (runnerClientId && runnerClientId !== currentIdStr) {
+    return true;
+  }
+
+  const nameMatch = (runner.agent_name || runner.runner_id || runner.server_name || '').match(/(\d+)/);
+  if (nameMatch && nameMatch[1] && nameMatch[1] !== currentIdStr) {
+    return true;
+  }
+
+  return false;
+}
+
 // Self-Healing Error Recovery Engine State
 let recoveryState = {
   heartbeat_interval_sec: 5,
@@ -1014,14 +1036,14 @@ async function getActiveApiKey(targetUserId, requestedProvider = null, targetFir
       let match = null;
       if (requestedProvider) {
         match = rows.find(r => r.LLM_PROVIDER === requestedProvider && r.STATUS === 'ACTIVE') ||
-                rows.find(r => r.LLM_PROVIDER === requestedProvider);
+          rows.find(r => r.LLM_PROVIDER === requestedProvider);
       }
       if (!match) {
         // Preferred Provider Priority: GEMINI -> GROQ -> Any Active Text LLM
         match = rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER === 'GEMINI' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
-                rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER === 'GROQ' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
-                rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
-                rows[0];
+          rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER === 'GROQ' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+          rows.find(r => r.STATUS === 'ACTIVE' && r.LLM_PROVIDER_TYPE !== 'TEXT-TO-IMAGE') ||
+          rows[0];
       }
 
       if (match) {
@@ -2764,13 +2786,13 @@ function analyzeTopic(requestText) {
 
   const promptClean = requestText.trim();
 
-  return { 
-    industry, 
-    country, 
-    region: promptClean, 
-    state: promptClean, 
-    targetContacts, 
-    hasExplicitTarget 
+  return {
+    industry,
+    country,
+    region: promptClean,
+    state: promptClean,
+    targetContacts,
+    hasExplicitTarget
   };
 }
 
@@ -3036,10 +3058,35 @@ app.post('/api/runners/add', (req, res) => {
   res.json({ success: true, runner: newRunner });
 });
 
+// Endpoint to verify superadmin password
+app.post('/api/runners/verify-superadmin', (req, res) => {
+  const { password } = req.body || {};
+  if (password === SUPERADMIN_PASSWORD) {
+    return res.json({ success: true, message: 'Superadmin password verified successfully.' });
+  }
+  return res.status(401).json({ success: false, error: 'Invalid superadmin password.' });
+});
+
+const handleDeleteRunnerLogic = (runner_id, superadmin_password, requestingClientId, res) => {
+  const runner = runnerRegistry.find(r => r.runner_id === runner_id || r.agent_name === runner_id);
+  if (runner && isOtherUserRunner(runner, requestingClientId)) {
+    if (superadmin_password !== SUPERADMIN_PASSWORD) {
+      return res.status(403).json({ success: false, error: 'Superadmin password required to delete another user\'s runner entry.' });
+    }
+  }
+  runnerRegistry = runnerRegistry.filter(r => r.runner_id !== runner_id && r.agent_name !== runner_id);
+  res.json({ success: true, message: 'Runner deleted successfully.' });
+};
+
 app.post('/api/runners/delete', (req, res) => {
-  const { runner_id } = req.body;
-  runnerRegistry = runnerRegistry.filter(r => r.runner_id !== runner_id);
-  res.json({ success: true });
+  const { runner_id, superadmin_password } = req.body || {};
+  handleDeleteRunnerLogic(runner_id, superadmin_password, req.clientId, res);
+});
+
+app.delete('/api/runners/:id', (req, res) => {
+  const runner_id = req.params.id;
+  const superadmin_password = req.body?.superadmin_password || req.headers['x-superadmin-password'] || req.query?.superadmin_password;
+  handleDeleteRunnerLogic(runner_id, superadmin_password, req.clientId, res);
 });
 
 // Control Scraper Executable (Global Start/Stop)
@@ -3122,10 +3169,16 @@ app.post('/api/exe/stop', async (req, res) => {
 
 // Control Individual Runner Execution (Start/Stop per runner)
 app.post('/api/runners/start', async (req, res) => {
-  const { runner_id } = req.body;
+  const { runner_id, superadmin_password } = req.body || {};
   const runner = runnerRegistry.find(r => r.runner_id === runner_id || r.agent_name === runner_id);
   if (!runner) {
     return res.status(404).json({ error: 'Runner not found' });
+  }
+
+  if (isOtherUserRunner(runner, req.clientId)) {
+    if (superadmin_password !== SUPERADMIN_PASSWORD) {
+      return res.status(403).json({ success: false, error: 'Superadmin password required to control another user\'s runner entry.' });
+    }
   }
 
   // Instantly mark runner as Running on server
@@ -3162,10 +3215,16 @@ app.post('/api/runners/start', async (req, res) => {
 });
 
 app.post('/api/runners/stop', async (req, res) => {
-  const { runner_id } = req.body;
+  const { runner_id, superadmin_password } = req.body || {};
   const runner = runnerRegistry.find(r => r.runner_id === runner_id || r.agent_name === runner_id);
   if (!runner) {
     return res.status(404).json({ error: 'Runner not found' });
+  }
+
+  if (isOtherUserRunner(runner, req.clientId)) {
+    if (superadmin_password !== SUPERADMIN_PASSWORD) {
+      return res.status(403).json({ success: false, error: 'Superadmin password required to control another user\'s runner entry.' });
+    }
   }
 
   // Send WS stop_execution signal directly to runner socket
