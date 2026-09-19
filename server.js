@@ -1479,8 +1479,11 @@ async function validateDiscoveredCitiesWithPortalDB(discoveredCities, currentMem
             [portalId]
           );
           if (spRows && spRows.length > 0) {
-            alreadyInProcessing = true;
-            existingEmpId = spRows[0].EMP_ID;
+            const spStatus = String(spRows[0].STATUS).toUpperCase();
+            if (spStatus !== 'FAILED' && spStatus !== 'CANCELLED') {
+              alreadyInProcessing = true;
+              existingEmpId = spRows[0].EMP_ID;
+            }
           }
         } catch (e) { }
       }
@@ -2964,8 +2967,20 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
       );
 
       if (existing && existing.length > 0) {
-        console.log(`[ADD TO PROCESSING] Portal ${portalId} already exists (EMP_ID: ${existing[0].EMP_ID})`);
-        blockedItems.push({ portal_id: portalId, city: portalName, emp_id: existing[0].EMP_ID });
+        const currentStatus = String(existing[0].STATUS).toUpperCase();
+        if (currentStatus === 'FAILED' || currentStatus === 'CANCELLED') {
+          console.log(`[ADD TO PROCESSING] Portal ${portalId} exists with status '${currentStatus}'. Updating status to PENDING and EMP_ID to ${empId}`);
+          await connection.query(
+            `UPDATE SCRAPPER_PROCESSING 
+             SET STATUS = 'PENDING', EMP_ID = ?, UPDATE_DTM = NOW() 
+             WHERE SP_ID = ?`,
+            [empId, existing[0].SP_ID]
+          );
+          addedCount++;
+        } else {
+          console.log(`[ADD TO PROCESSING] Portal ${portalId} already exists in active status '${currentStatus}' (EMP_ID: ${existing[0].EMP_ID})`);
+          blockedItems.push({ portal_id: portalId, city: portalName, emp_id: existing[0].EMP_ID, status: currentStatus });
+        }
       } else {
         console.log(`[ADD TO PROCESSING] Inserting portal ${portalId} into SCRAPPER_PROCESSING`);
         await connection.query(
