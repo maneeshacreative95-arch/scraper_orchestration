@@ -118,7 +118,8 @@ export function useCityDiscovery(onRefreshStatus) {
     setSelectedPortals((prev) => ({ ...prev, [idx]: checked }));
   };
 
-  const handleAddToProcessing = async (superadminPassword = null) => {
+  const handleAddToProcessing = async (superadminPasswordParam = null) => {
+    const superadminPassword = typeof superadminPasswordParam === 'string' ? superadminPasswordParam : null;
     const selectedIndices = Object.keys(selectedPortals).filter((k) => selectedPortals[k]);
     if (selectedIndices.length === 0) {
       alert('Please select at least one portal checkbox to add to SCRAPPER_PROCESSING.');
