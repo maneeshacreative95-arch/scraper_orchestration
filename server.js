@@ -1108,8 +1108,16 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
   logReallocation(`[LLM DISCOVERY] Using active Provider '${provider}', Model '${modelName}' from DB API_KEY_MANAGER (Force LLM: ${forceLLM}).`);
 
   const excludePrompt = Array.isArray(existingCities) && existingCities.length > 0
-    ? ` Exclude the following already known cities/locations: [${existingCities.join(', ')}]. Discover 15 additional cities/towns in this region.`
+    ? ` Exclude the following already known cities/locations: [${existingCities.join(', ')}]. Discover additional cities/towns in this region.`
     : '';
+
+  const promptInstruction = `You are a global location and market intelligence AI with deep geographic knowledge down to sub-localities, taluks, and village levels. Analyze the location query '${regionCoverage}' for topic '${topic}'.
+1. If '${regionCoverage}' refers to a specific sub-locality, neighborhood, or village within a district/city (e.g. "Manali, Kanyakumari" -> Locality "Manali" in Thuckalay, District "Kanyakumari", State "Tamil Nadu"), accurately identify the exact State, City/Locality name, District, and Pincode/Zipcode.
+2. If '${regionCoverage}' contains multiple comma-separated distinct cities, return a separate JSON object for EACH city.
+3. If '${regionCoverage}' is a broader region/state, list top cities/towns in that region.${excludePrompt}
+Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase e.g. IN), "district", "zipcode".
+Example JSON: [{"state":"Tamil Nadu","city":"Manali (Thuckalay)","approx_businesses":1500,"country_domain":"IN","district":"Kanyakumari","zipcode":"629175"}]`;
+
 
   try {
     let textOut = '';
@@ -1129,9 +1137,7 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{
-              parts: [{
-                text: `You are a global location and market intelligence AI. Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'.${excludePrompt} Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code e.g. OM for Oman, IN for India, US for USA, UK for UK, AE for UAE, JP for Japan), "district", "zipcode". Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]`
-              }]
+              parts: [{ text: promptInstruction }]
             }],
             generationConfig: {
               temperature: 0.3,
@@ -1180,8 +1186,8 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
             temperature: 0.3,
             max_tokens: 2500,
             messages: [
-              { role: 'system', content: 'You are a global location and market intelligence AI. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain" (2-letter uppercase country code), "district", "zipcode". Never use ellipses (...), truncated values, comments, or prose.' },
-              { role: 'user', content: `Identify top 15 major cities/towns and estimated business density for topic '${topic}' across region/state '${regionCoverage}'.${excludePrompt} Example JSON: [{"state":"Muscat","city":"Al Wadi","approx_businesses":5000,"country_domain":"OM","district":"Muscat","zipcode":"100"}]` }
+              { role: 'system', content: 'You are a global location and market intelligence AI. Output strictly a valid, complete JSON array of objects with keys: "state", "city", "approx_businesses", "country_domain", "district", "zipcode". Never use ellipses (...), truncated values, comments, or prose.' },
+              { role: 'user', content: promptInstruction }
             ]
           }),
           signal: AbortSignal.timeout(12000)
@@ -1264,17 +1270,22 @@ async function llmRegionDiscovery(topic, regionCoverage, targetCompaniesLimit, t
     console.error('[LLM DISCOVERY] Live API query error:', llmErr.message);
   }
 
-  // Fallback: If no direct match in DB and LLM call produced no results, create a dynamic single record from the search prompt
-  const fallbackCity = (regionCoverage || topic || 'Location').trim();
-  const titleCity = fallbackCity.charAt(0).toUpperCase() + fallbackCity.slice(1);
+  // Fallback: If LLM call produced no valid JSON, split prompt by commas into individual cities/locations
+  const fallbackStr = (regionCoverage || topic || 'Location').trim();
+  const rawCities = fallbackStr.includes(',')
+    ? fallbackStr.split(',').map(s => s.trim()).filter(Boolean)
+    : [fallbackStr];
 
-  return [{
-    state: 'India',
-    city: titleCity,
-    portal_id: null,
-    approx_businesses: 5000,
-    db_content_count: 5000
-  }];
+  return rawCities.map(cName => {
+    const titleC = cName.charAt(0).toUpperCase() + cName.slice(1);
+    return {
+      state: 'India',
+      city: titleC,
+      portal_id: null,
+      approx_businesses: 5000,
+      db_content_count: 5000
+    };
+  });
 }
 
 // Helper to populate SCRAPPER_PROCESSING table with prompt portals
