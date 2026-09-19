@@ -553,6 +553,7 @@ function logReallocationEvent(eventData) {
 // WebSocket Live Runner Registry Connection Manager
 const wsConnectedRunners = new Map(); // runner_id -> { ws, runner_id, runner_name, client_id, server_ip, port, connected_at, last_heartbeat, status }
 const disconnectTimers = new Map(); // runner_id -> setTimeout handle (grace period before marking Disconnected)
+const stoppingRunners = new Map(); // runner_id -> expiry timestamp (ms). Blocks Running heartbeats from overriding Stopping status.
 
 function handleWsConnection(ws, req) {
   const clientIp = req.socket.remoteAddress || '127.0.0.1';
@@ -683,36 +684,51 @@ function handleWsConnection(ws, req) {
         if (runnerId && wsConnectedRunners.has(runnerId)) {
           const clientObj = wsConnectedRunners.get(runnerId);
           const isRunning = data.status && (String(data.status).toLowerCase() === 'running' || data.status === 'Busy');
-          clientObj.status = isRunning ? 'Running' : 'Idle';
-          if (data.version) clientObj.version = data.version;
 
-          let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
-          if (!regItem) {
-            regItem = {
-              runner_id: runnerId,
-              version: data.version || clientObj.version || null,
-              server_name: clientObj.runner_name || `Server (${clientObj.server_ip})`,
-              host_ip: `${clientObj.server_ip}:${clientObj.port}`,
-              agent_name: clientObj.runner_name || runnerId,
-              client_id: clientObj.client_id,
-              status: isRunning ? 'Running' : 'Idle',
-              last_heartbeat: new Date(),
-              current_workflow: isRunning ? (data.category || 'Scraping Execution') : null,
-              current_batch: null,
-              execution_id: isRunning ? (data.execution_id || null) : null,
-              portal_id: null
-            };
-            runnerRegistry.push(regItem);
+          // Check if runner is in Stopping grace period — don't let Running heartbeats override it
+          const stoppingExpiry = stoppingRunners.get(runnerId);
+          const isInStoppingGrace = stoppingExpiry && Date.now() < stoppingExpiry;
+
+          if (isInStoppingGrace && isRunning) {
+            // Runner exe still reporting Running mid-stop — hold 'Stopping' status, only update heartbeat time
+            const clientObj2 = wsConnectedRunners.get(runnerId);
+            if (clientObj2) clientObj2.last_heartbeat = new Date();
+            const regItem2 = runnerRegistry.find(r => r.runner_id === runnerId);
+            if (regItem2) regItem2.last_heartbeat = new Date();
           } else {
-            regItem.last_heartbeat = new Date();
-            regItem.status = isRunning ? 'Running' : 'Idle';
-            if (data.version) regItem.version = data.version;
-            if (isRunning) {
-              if (data.category) regItem.current_workflow = data.category;
-              if (data.execution_id) regItem.execution_id = data.execution_id;
+            // Normal heartbeat processing
+            if (!isRunning) stoppingRunners.delete(runnerId); // Clear stopping grace when exe confirms idle
+            clientObj.status = isRunning ? 'Running' : 'Idle';
+            if (data.version) clientObj.version = data.version;
+
+            let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+            if (!regItem) {
+              regItem = {
+                runner_id: runnerId,
+                version: data.version || clientObj.version || null,
+                server_name: clientObj.runner_name || `Server (${clientObj.server_ip})`,
+                host_ip: `${clientObj.server_ip}:${clientObj.port}`,
+                agent_name: clientObj.runner_name || runnerId,
+                client_id: clientObj.client_id,
+                status: isRunning ? 'Running' : 'Idle',
+                last_heartbeat: new Date(),
+                current_workflow: isRunning ? (data.category || 'Scraping Execution') : null,
+                current_batch: null,
+                execution_id: isRunning ? (data.execution_id || null) : null,
+                portal_id: null
+              };
+              runnerRegistry.push(regItem);
             } else {
-              regItem.current_workflow = null;
-              regItem.execution_id = null;
+              regItem.last_heartbeat = new Date();
+              regItem.status = isRunning ? 'Running' : 'Idle';
+              if (data.version) regItem.version = data.version;
+              if (isRunning) {
+                if (data.category) regItem.current_workflow = data.category;
+                if (data.execution_id) regItem.execution_id = data.execution_id;
+              } else {
+                regItem.current_workflow = null;
+                regItem.execution_id = null;
+              }
             }
           }
 
@@ -731,7 +747,11 @@ function handleWsConnection(ws, req) {
         if (runnerId && wsConnectedRunners.has(runnerId)) {
           const clientObj = wsConnectedRunners.get(runnerId);
           clientObj.last_heartbeat = new Date();
-          clientObj.status = 'Running';
+          // Only update to Running if not in Stopping grace period
+          const stoppingExpiry = stoppingRunners.get(runnerId);
+          if (!stoppingExpiry || Date.now() >= stoppingExpiry) {
+            clientObj.status = 'Running';
+          }
         }
 
         const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
@@ -3333,12 +3353,18 @@ app.post('/api/runners/stop', async (req, res) => {
   }
 
   runnerExecutionLocks.delete(runner.runner_id);
-  runner.status = 'Idle';
+  // Mark as 'Stopping' with a 30s grace period to block in-flight Running heartbeats from the exe
+  runner.status = 'Stopping';
   runner.current_workflow = null;
   runner.current_batch = null;
   runner.execution_id = null;
+  stoppingRunners.set(runner.runner_id, Date.now() + 30000); // 30s grace
 
-  console.log(`[API /api/runners/stop] Successfully stopped runner ${runner.agent_name}. Returning JSON response.`);
+  // Also update wsConnectedRunners status if present
+  const wsInfo = wsConnectedRunners.get(runner.runner_id);
+  if (wsInfo) wsInfo.status = 'Stopping';
+
+  console.log(`[API /api/runners/stop] Successfully stopped runner ${runner.agent_name}. Marked as Stopping for 30s grace period.`);
   res.json({ success: true, message: `Runner ${runner.agent_name} execution stopped.` });
 });
 

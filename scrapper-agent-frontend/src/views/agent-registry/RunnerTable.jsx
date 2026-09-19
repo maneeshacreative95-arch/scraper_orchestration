@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Square, Trash2 } from 'lucide-react';
+import { Play, Square, Trash2, Loader2 } from 'lucide-react';
 
 export default function RunnerTable({
   runners,
@@ -33,7 +33,10 @@ export default function RunnerTable({
           ) : (
             runners.map((r) => {
               const isRunning = r.status === 'Running' || r.status === 'Busy';
-              let statusClass = 'badge-completed';
+              const isStopping = r.status === 'Stopping';
+              const isDisconnected = r.status === 'Disconnected';
+
+              let statusClass = 'badge-completed'; // Idle default
               if (isRunning) statusClass = 'badge-running';
               else if (r.status === 'Offline' || r.status === 'Crashed') statusClass = 'badge-failed';
 
@@ -58,7 +61,29 @@ export default function RunnerTable({
                   </td>
                   <td>{r.agent_name || '-'}</td>
                   <td>
-                    <span className={`badge ${statusClass}`}>{r.status || 'Idle'}</span>
+                    {isStopping ? (
+                      <span className="badge" style={{
+                        background: 'rgba(251, 191, 36, 0.15)',
+                        color: '#fbbf24',
+                        border: '1px solid rgba(251, 191, 36, 0.35)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}>
+                        <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+                        Stopping
+                      </span>
+                    ) : isDisconnected ? (
+                      <span className="badge" style={{
+                        background: 'rgba(251, 146, 60, 0.12)',
+                        color: '#fb923c',
+                        border: '1px solid rgba(251, 146, 60, 0.3)'
+                      }}>
+                        Disconnected
+                      </span>
+                    ) : (
+                      <span className={`badge ${statusClass}`}>{r.status || 'Idle'}</span>
+                    )}
                   </td>
                   <td style={{ fontSize: '0.75rem' }}>
                     {r.last_heartbeat ? new Date(r.last_heartbeat).toLocaleTimeString() : '-'}
@@ -69,7 +94,24 @@ export default function RunnerTable({
                   <td>{r.current_batch || '-'}</td>
                   <td>
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      {isRunning ? (
+                      {isStopping ? (
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          disabled
+                          style={{
+                            color: '#fbbf24',
+                            borderColor: 'rgba(251, 191, 36, 0.4)',
+                            opacity: 0.7,
+                            cursor: 'not-allowed',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                          Stopping...
+                        </button>
+                      ) : isRunning ? (
                         <button
                           className="btn btn-secondary btn-sm"
                           style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.4)' }}
