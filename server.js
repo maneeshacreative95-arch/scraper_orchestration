@@ -137,12 +137,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Global HTTP Request Logger
-app.use((req, res, next) => {
-  if (req.url && req.url.includes('/api/')) {
-    console.log(`[HTTP ${req.method}] ${req.url} - Origin: ${req.headers.origin || '-'}, Body:`, req.body ? JSON.stringify(req.body) : '{}');
-  }
-  next();
-});
+// app.use((req, res, next) => {
+//   if (req.url && req.url.includes('/api/')) {
+//     console.log(`[HTTP ${req.method}] ${req.url} - Origin: ${req.headers.origin || '-'}, Body:`, req.body ? JSON.stringify(req.body) : '{}');
+//   }
+//   next();
+// });
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/scrapper-agent', express.static(path.join(__dirname, 'public')));
