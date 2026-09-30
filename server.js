@@ -3115,6 +3115,150 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
   }
 });
 
+// Endpoint to fetch user's past history in SCRAPPER_PROCESSING filtered by userid (EMP_ID)
+async function handleGetProcessingHistory(req, res) {
+  try {
+    const rawUserId = req.params.userId || req.query.userid || req.query.user_id || req.query.emp_id || req.query.empid || req.clientId || 1572;
+    const empId = parseInt(rawUserId, 10);
+
+    if (isNaN(empId) || empId <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid User/Employee ID provided.' });
+    }
+
+    const statusFilter = req.query.status && req.query.status.toUpperCase() !== 'ALL'
+      ? req.query.status.toUpperCase()
+      : null;
+    const search = req.query.search ? String(req.query.search).trim() : null;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 500, 1), 2000);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    // Fetch status summary metrics for this user
+    const [summaryRows] = await dbPool.query(
+      `SELECT 
+        COUNT(*) as total,
+        COALESCE(SUM(CASE WHEN STATUS = 'DONE' THEN 1 ELSE 0 END), 0) as done,
+        COALESCE(SUM(CASE WHEN STATUS = 'PENDING' THEN 1 ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN STATUS = 'PROCESSING' THEN 1 ELSE 0 END), 0) as processing,
+        COALESCE(SUM(CASE WHEN STATUS = 'CANCELLED' THEN 1 ELSE 0 END), 0) as cancelled,
+        COALESCE(SUM(CASE WHEN STATUS = 'FAILED' THEN 1 ELSE 0 END), 0) as failed
+      FROM SCRAPPER_PROCESSING
+      WHERE EMP_ID = ?`,
+      [empId]
+    );
+
+    const summary = summaryRows && summaryRows.length > 0 ? {
+      total: Number(summaryRows[0].total || 0),
+      done: Number(summaryRows[0].done || 0),
+      pending: Number(summaryRows[0].pending || 0),
+      processing: Number(summaryRows[0].processing || 0),
+      cancelled: Number(summaryRows[0].cancelled || 0),
+      failed: Number(summaryRows[0].failed || 0)
+    } : { total: 0, done: 0, pending: 0, processing: 0, cancelled: 0, failed: 0 };
+
+    // Build dynamic query for history records
+    let whereClauses = ['EMP_ID = ?'];
+    let queryParams = [empId];
+
+    if (statusFilter) {
+      whereClauses.push('STATUS = ?');
+      queryParams.push(statusFilter);
+    }
+
+    if (search) {
+      whereClauses.push('(PORTALNAME LIKE ? OR CAST(PORTALID AS CHAR) LIKE ?)');
+      queryParams.push(`%${search}%`, `%${search}%`);
+    }
+
+    const whereSql = whereClauses.join(' AND ');
+
+    // Count matching rows
+    const [countRows] = await dbPool.query(
+      `SELECT COUNT(*) as filtered_total FROM SCRAPPER_PROCESSING WHERE ${whereSql}`,
+      queryParams
+    );
+    const filteredTotal = countRows && countRows.length > 0 ? Number(countRows[0].filtered_total || 0) : 0;
+
+    // Fetch paginated history rows
+    const [rows] = await dbPool.query(
+      `SELECT SP_ID, EMP_ID, PORTALNAME, PORTAL_AREAS, PORTALID, STATUS, INSRT_DTM, UPDATE_DTM
+       FROM SCRAPPER_PROCESSING
+       WHERE ${whereSql}
+       ORDER BY UPDATE_DTM DESC, SP_ID DESC
+       LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset]
+    );
+
+    const formattedHistory = rows.map(r => ({
+      sp_id: r.SP_ID,
+      emp_id: r.EMP_ID,
+      portal_name: r.PORTALNAME,
+      portal_areas: r.PORTAL_AREAS || '',
+      portal_id: r.PORTALID,
+      status: r.STATUS,
+      insert_dtm: r.INSRT_DTM,
+      update_dtm: r.UPDATE_DTM,
+      // Uppercase alias for direct DB field compatibility
+      SP_ID: r.SP_ID,
+      EMP_ID: r.EMP_ID,
+      PORTALNAME: r.PORTALNAME,
+      PORTAL_AREAS: r.PORTAL_AREAS || '',
+      PORTALID: r.PORTALID,
+      STATUS: r.STATUS,
+      INSRT_DTM: r.INSRT_DTM,
+      UPDATE_DTM: r.UPDATE_DTM
+    }));
+
+    res.json({
+      success: true,
+      user_id: empId,
+      emp_id: empId,
+      summary,
+      total_records: filteredTotal,
+      count: formattedHistory.length,
+      limit,
+      offset,
+      history: formattedHistory
+    });
+
+  } catch (err) {
+    console.error('[PROCESSING HISTORY ERROR]', err.message, err.stack);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+app.get('/api/scrapper-processing/history', handleGetProcessingHistory);
+app.get('/api/scrapper-processing/history/:userId', handleGetProcessingHistory);
+app.get('/api/processing-history', handleGetProcessingHistory);
+app.get('/api/history', handleGetProcessingHistory);
+
+// Endpoint to update or retry/cancel a task in SCRAPPER_PROCESSING
+app.post('/api/scrapper-processing/update-status', async (req, res) => {
+  const { sp_id, status } = req.body || {};
+  if (!sp_id || !status) {
+    return res.status(400).json({ success: false, error: 'sp_id and status are required.' });
+  }
+  const targetStatus = String(status).toUpperCase();
+  const allowedStatuses = ['PENDING', 'CANCELLED'];
+  if (!allowedStatuses.includes(targetStatus)) {
+    return res.status(400).json({ success: false, error: `Status must be one of: ${allowedStatuses.join(', ')}` });
+  }
+
+  try {
+    const [result] = await dbPool.query(
+      `UPDATE SCRAPPER_PROCESSING SET STATUS = ?, UPDATE_DTM = NOW() WHERE SP_ID = ?`,
+      [targetStatus, sp_id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, error: 'Task not found in SCRAPPER_PROCESSING.' });
+    }
+    logReallocation(`[SCRAPPER_PROCESSING] Task SP_ID ${sp_id} updated to status '${targetStatus}'.`);
+    res.json({ success: true, message: `Task status updated to ${targetStatus}` });
+  } catch (err) {
+    console.error('[SCRAPPER_PROCESSING UPDATE STATUS ERROR]', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Distributed Runner Registry Endpoints (Step 5)
 app.get('/api/runners', (req, res) => {
   res.json({ success: true, runners: runnerRegistry });

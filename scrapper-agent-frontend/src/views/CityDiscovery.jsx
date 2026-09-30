@@ -1,11 +1,12 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import DiscoverySearchPanel from './city-discovery/DiscoverySearchPanel';
 import PortalValidationTable from './city-discovery/PortalValidationTable';
 import UserAssignmentBar from './city-discovery/UserAssignmentBar';
 import { extractAgentOptions } from './city-discovery/helpers';
 import { useCityDiscovery } from './city-discovery/useCityDiscovery';
 import PasswordModal from '../components/PasswordModal';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, History } from 'lucide-react';
 
 export default function CityDiscovery({ runners = [], onRefreshStatus }) {
   const {
@@ -65,6 +66,10 @@ export default function CityDiscovery({ runners = [], onRefreshStatus }) {
         <div className="panel-card" style={{ borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(15, 23, 42, 0.6)' }}>
           <div className="panel-header">
             <h3 style={{ color: 'var(--color-success)' }}>Step 2: Portal Database Validation & Queue Scheduling</h3>
+            <Link to="/processing-history" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+              <History size={14} />
+              <span>View Processing History</span>
+            </Link>
           </div>
 
           <PortalValidationTable
