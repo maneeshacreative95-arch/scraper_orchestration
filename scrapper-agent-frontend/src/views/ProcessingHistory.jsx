@@ -530,25 +530,47 @@ export default function ProcessingHistory() {
                       </td>
                       <td>{getStatusBadge(currentStatus)}</td>
                       <td>
-                        {/* Clean Status Selector: Only PENDING and DONE */}
+                        {/* Clean Status Selector: Only PENDING and DONE; Blank if status is not present in dropdown */}
                         <select
-                          value={currentStatus === 'DONE' ? 'DONE' : 'PENDING'}
+                          value={['PENDING', 'DONE'].includes(currentStatus) ? currentStatus : ''}
                           disabled={isRowLoading}
-                          onChange={(e) => handleStatusUpdate(spId, e.target.value)}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleStatusUpdate(spId, e.target.value);
+                            }
+                          }}
                           style={{
-                            background: currentStatus === 'DONE' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                            color: currentStatus === 'DONE' ? '#10b981' : '#f59e0b',
-                            border: `1px solid ${currentStatus === 'DONE' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
+                            background: currentStatus === 'DONE'
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : (currentStatus === 'PENDING'
+                                ? 'rgba(245, 158, 11, 0.15)'
+                                : 'rgba(255, 255, 255, 0.04)'),
+                            color: currentStatus === 'DONE'
+                              ? '#10b981'
+                              : (currentStatus === 'PENDING'
+                                ? '#f59e0b'
+                                : 'transparent'),
+                            border: `1px solid ${
+                              currentStatus === 'DONE'
+                                ? 'rgba(16, 185, 129, 0.4)'
+                                : (currentStatus === 'PENDING'
+                                  ? 'rgba(245, 158, 11, 0.4)'
+                                  : 'rgba(255, 255, 255, 0.15)')
+                            }`,
                             borderRadius: '6px',
                             padding: '4px 10px',
                             fontSize: '0.78rem',
                             fontWeight: '700',
                             cursor: 'pointer',
                             outline: 'none',
-                            letterSpacing: '0.5px'
+                            letterSpacing: '0.5px',
+                            minWidth: '92px'
                           }}
                           title="Change status to PENDING or DONE"
                         >
+                          {!['PENDING', 'DONE'].includes(currentStatus) && (
+                            <option value="" disabled hidden></option>
+                          )}
                           <option value="PENDING" style={{ background: '#0f172a', color: '#f59e0b', fontWeight: '600' }}>PENDING</option>
                           <option value="DONE" style={{ background: '#0f172a', color: '#10b981', fontWeight: '600' }}>DONE</option>
                         </select>
