@@ -1429,22 +1429,37 @@ async function addPortalsToScrapperProcessing(validatedLocations, empId) {
       const portalName = item.city || item.portal_name || 'Location';
 
       const [existing] = await connection.query(
-        `SELECT SP_ID FROM SCRAPPER_PROCESSING WHERE EMP_ID = ? AND PORTALID = ?`,
+        `SELECT SP_ID, STATUS FROM SCRAPPER_PROCESSING WHERE EMP_ID = ? AND PORTALID = ?`,
         [eId, portalId]
       );
 
       if (existing && existing.length > 0) {
+        // STRICT GUARD: Never reset a DONE task back to PENDING!
+        if (String(existing[0].STATUS).toUpperCase() === 'DONE') {
+          console.log(`[SCRAPPER_PROCESSING GUARD] Portal ${portalId} is already marked DONE. Strictly skipping reset to PENDING.`);
+          continue;
+        }
         await connection.query(
-          `UPDATE SCRAPPER_PROCESSING SET STATUS = 'PENDING', UPDATE_DTM = NOW() WHERE SP_ID = ?`,
+          `UPDATE SCRAPPER_PROCESSING SET STATUS = 'PENDING', UPDATE_DTM = NOW() WHERE SP_ID = ? AND STATUS != 'DONE'`,
           [existing[0].SP_ID]
         );
       } else {
+        // Double check no DONE row exists for this portal & emp before inserting
+        const [doneRecord] = await connection.query(
+          `SELECT SP_ID FROM SCRAPPER_PROCESSING WHERE EMP_ID = ? AND PORTALID = ? AND STATUS = 'DONE'`,
+          [eId, portalId]
+        );
+        if (doneRecord && doneRecord.length > 0) {
+          console.log(`[SCRAPPER_PROCESSING GUARD] Portal ${portalId} is already DONE for Employee ${eId}. Skipping insert.`);
+          continue;
+        }
         await connection.query(
           `INSERT INTO SCRAPPER_PROCESSING (EMP_ID, PORTALNAME, PORTALID, STATUS, INSRT_DTM, UPDATE_DTM)
            VALUES (?, ?, ?, 'PENDING', NOW(), NOW())`,
           [eId, portalName, portalId]
         );
       }
+
     }
     logReallocation(`[SCRAPPER_PROCESSING] Inserted/updated ${validatedLocations.length} prompt portals in SCRAPPER_PROCESSING for Employee ID ${eId}.`);
   } catch (err) {
