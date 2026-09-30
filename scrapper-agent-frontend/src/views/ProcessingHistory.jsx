@@ -8,11 +8,8 @@ import {
   Search,
   CheckCircle2,
   Clock,
-  PlayCircle,
   AlertTriangle,
   XCircle,
-  RotateCcw,
-  Ban,
   User,
   CheckSquare
 } from 'lucide-react';
@@ -22,7 +19,7 @@ export default function ProcessingHistory() {
   const empId = userId || '919';
 
   const [history, setHistory] = useState([]);
-  const [summary, setSummary] = useState({ total: 0, done: 0, pending: 0, processing: 0, cancelled: 0, failed: 0 });
+  const [summary, setSummary] = useState({ total: 0, done: 0, pending: 0 });
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -49,7 +46,11 @@ export default function ProcessingHistory() {
       if (res.ok && data.success) {
         setHistory(data.history || []);
         if (data.summary) {
-          setSummary(data.summary);
+          setSummary({
+            total: data.summary.total || 0,
+            done: data.summary.done || 0,
+            pending: data.summary.pending || 0
+          });
         }
       } else {
         setError(data.error || 'Failed to fetch processing history');
@@ -76,7 +77,7 @@ export default function ProcessingHistory() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setActionMessage(`Task #${spId} status changed to ${newStatus}.`);
+        setActionMessage(`Task #${spId} status updated to ${newStatus}.`);
         setTimeout(() => setActionMessage(null), 4000);
         fetchHistory();
       } else {
@@ -102,7 +103,7 @@ export default function ProcessingHistory() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setActionMessage(`Successfully changed ${idsArray.length} task(s) to ${newStatus}.`);
+        setActionMessage(`Successfully updated ${idsArray.length} task(s) to ${newStatus}.`);
         setSelectedIds(new Set());
         setTimeout(() => setActionMessage(null), 4000);
         fetchHistory();
@@ -144,19 +145,7 @@ export default function ProcessingHistory() {
     if (s === 'DONE' || s === 'COMPLETED') {
       return <span className="badge badge-completed">Done</span>;
     }
-    if (s === 'PROCESSING') {
-      return <span className="badge badge-running" style={{ animation: 'pulse 1.5s infinite' }}>Processing</span>;
-    }
-    if (s === 'PENDING') {
-      return <span className="badge badge-pending">Pending</span>;
-    }
-    if (s === 'CANCELLED') {
-      return <span className="badge badge-offline">Cancelled</span>;
-    }
-    if (s === 'FAILED') {
-      return <span className="badge badge-failed">Failed</span>;
-    }
-    return <span className="badge">{status}</span>;
+    return <span className="badge badge-pending">Pending</span>;
   };
 
   const formatDate = (dateStr) => {
@@ -186,7 +175,7 @@ export default function ProcessingHistory() {
               <h2>SCRAPPER_PROCESSING User History</h2>
             </div>
             <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '4px' }}>
-              Your database queue tasks from SCRAPPER_PROCESSING table. Manage and update city statuses to PENDING or DONE.
+              Your database queue tasks from SCRAPPER_PROCESSING table.
             </p>
           </div>
 
@@ -217,10 +206,10 @@ export default function ProcessingHistory() {
           </div>
         </div>
 
-        {/* Metric Cards Row */}
+        {/* Simplified Metric Cards Row */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
           gap: '1rem',
           marginTop: '1rem'
         }}>
@@ -254,7 +243,7 @@ export default function ProcessingHistory() {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Completed</span>
+              <span style={{ fontSize: '0.75rem', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Completed (DONE)</span>
               <CheckCircle2 size={16} style={{ color: '#10b981' }} />
             </div>
             <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#10b981' }}>{summary.done}</div>
@@ -272,46 +261,10 @@ export default function ProcessingHistory() {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending</span>
+              <span style={{ fontSize: '0.75rem', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending (PENDING)</span>
               <Clock size={16} style={{ color: '#f59e0b' }} />
             </div>
             <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#f59e0b' }}>{summary.pending}</div>
-          </div>
-
-          <div
-            onClick={() => setStatusFilter('PROCESSING')}
-            style={{
-              background: statusFilter === 'PROCESSING' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.02)',
-              border: `1px solid ${statusFilter === 'PROCESSING' ? '#60a5fa' : 'var(--border-card)'}`,
-              borderRadius: '12px',
-              padding: '1rem',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#60a5fa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Processing</span>
-              <PlayCircle size={16} style={{ color: '#60a5fa' }} />
-            </div>
-            <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#60a5fa' }}>{summary.processing}</div>
-          </div>
-
-          <div
-            onClick={() => setStatusFilter('CANCELLED')}
-            style={{
-              background: statusFilter === 'CANCELLED' ? 'rgba(156, 163, 175, 0.2)' : 'rgba(255, 255, 255, 0.02)',
-              border: `1px solid ${statusFilter === 'CANCELLED' ? '#9ca3af' : 'var(--border-card)'}`,
-              borderRadius: '12px',
-              padding: '1rem',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cancelled / Failed</span>
-              <Ban size={16} style={{ color: '#9ca3af' }} />
-            </div>
-            <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#e5e7eb' }}>{summary.cancelled + summary.failed}</div>
           </div>
         </div>
       </div>
@@ -376,12 +329,12 @@ export default function ProcessingHistory() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Status Filter:</span>
-            {['ALL', 'PENDING', 'DONE', 'PROCESSING', 'CANCELLED'].map((st) => (
+            {['ALL', 'PENDING', 'DONE'].map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
                 className={`btn btn-sm ${statusFilter === st ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ textTransform: 'capitalize', fontSize: '0.75rem', padding: '4px 10px' }}
+                style={{ textTransform: 'capitalize', fontSize: '0.75rem', padding: '4px 12px' }}
               >
                 {st.toLowerCase()}
               </button>
@@ -422,7 +375,7 @@ export default function ProcessingHistory() {
                 disabled={isLoading}
               >
                 <Clock size={14} />
-                <span>Change Selected to PENDING</span>
+                <span>Mark Selected as PENDING</span>
               </button>
 
               <button
@@ -437,7 +390,7 @@ export default function ProcessingHistory() {
                 disabled={isLoading}
               >
                 <CheckCircle2 size={14} />
-                <span>Change Selected to DONE</span>
+                <span>Mark Selected as DONE</span>
               </button>
 
               <button
@@ -467,10 +420,10 @@ export default function ProcessingHistory() {
                 <th>Portal / City Name</th>
                 <th>Portal ID</th>
                 <th>User (Emp ID)</th>
-                <th>Current Status</th>
+                <th>Status</th>
+                <th>Change Status</th>
                 <th>Queued At</th>
                 <th>Last Updated</th>
-                <th style={{ textAlign: 'center', minWidth: '260px' }}>Change Status</th>
               </tr>
             </thead>
             <tbody>
@@ -499,6 +452,7 @@ export default function ProcessingHistory() {
                   const currentStatus = String(row.status || row.STATUS || '').toUpperCase();
                   const isRowLoading = actionLoadingId === spId;
                   const isSelected = selectedIds.has(spId);
+                  const isDone = currentStatus === 'DONE' || currentStatus === 'COMPLETED';
 
                   return (
                     <tr
@@ -542,76 +496,35 @@ export default function ProcessingHistory() {
                         </span>
                       </td>
                       <td>{getStatusBadge(currentStatus)}</td>
+                      <td>
+                        {/* Clean Status Selector: Only PENDING and DONE */}
+                        <select
+                          value={isDone ? 'DONE' : 'PENDING'}
+                          disabled={isRowLoading}
+                          onChange={(e) => handleStatusUpdate(spId, e.target.value)}
+                          style={{
+                            background: isDone ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                            color: isDone ? '#10b981' : '#f59e0b',
+                            border: `1px solid ${isDone ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
+                            borderRadius: '6px',
+                            padding: '4px 10px',
+                            fontSize: '0.78rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            outline: 'none',
+                            letterSpacing: '0.5px'
+                          }}
+                          title="Change status to PENDING or DONE"
+                        >
+                          <option value="PENDING" style={{ background: '#0f172a', color: '#f59e0b', fontWeight: '600' }}>PENDING</option>
+                          <option value="DONE" style={{ background: '#0f172a', color: '#10b981', fontWeight: '600' }}>DONE</option>
+                        </select>
+                      </td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                         {formatDate(row.insert_dtm || row.INSRT_DTM)}
                       </td>
                       <td style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                         {formatDate(row.update_dtm || row.UPDATE_DTM)}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                          {/* Quick Change to PENDING */}
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            style={{
-                              padding: '4px 10px',
-                              fontSize: '0.74rem',
-                              color: currentStatus === 'PENDING' ? '#94a3b8' : '#f59e0b',
-                              border: `1px solid ${currentStatus === 'PENDING' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(245, 158, 11, 0.4)'}`,
-                              background: currentStatus === 'PENDING' ? 'rgba(255, 255, 255, 0.03)' : 'rgba(245, 158, 11, 0.12)',
-                              cursor: currentStatus === 'PENDING' ? 'default' : 'pointer'
-                            }}
-                            onClick={() => currentStatus !== 'PENDING' && handleStatusUpdate(spId, 'PENDING')}
-                            disabled={isRowLoading || currentStatus === 'PENDING'}
-                            title={currentStatus === 'PENDING' ? 'Already PENDING' : 'Change status to PENDING'}
-                          >
-                            <Clock size={12} className={isRowLoading ? 'spin-icon' : ''} />
-                            <span>PENDING</span>
-                          </button>
-
-                          {/* Quick Change to DONE */}
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            style={{
-                              padding: '4px 10px',
-                              fontSize: '0.74rem',
-                              color: currentStatus === 'DONE' ? '#94a3b8' : '#10b981',
-                              border: `1px solid ${currentStatus === 'DONE' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(16, 185, 129, 0.4)'}`,
-                              background: currentStatus === 'DONE' ? 'rgba(255, 255, 255, 0.03)' : 'rgba(16, 185, 129, 0.12)',
-                              cursor: currentStatus === 'DONE' ? 'default' : 'pointer'
-                            }}
-                            onClick={() => currentStatus !== 'DONE' && handleStatusUpdate(spId, 'DONE')}
-                            disabled={isRowLoading || currentStatus === 'DONE'}
-                            title={currentStatus === 'DONE' ? 'Already DONE' : 'Change status to DONE'}
-                          >
-                            <CheckCircle2 size={12} className={isRowLoading ? 'spin-icon' : ''} />
-                            <span>DONE</span>
-                          </button>
-
-                          {/* Dropdown selector for all valid enum values */}
-                          <select
-                            value={currentStatus}
-                            disabled={isRowLoading}
-                            onChange={(e) => handleStatusUpdate(spId, e.target.value)}
-                            style={{
-                              background: 'rgba(15, 23, 42, 0.85)',
-                              border: '1px solid rgba(255, 255, 255, 0.18)',
-                              borderRadius: '6px',
-                              color: '#cbd5e1',
-                              padding: '3px 8px',
-                              fontSize: '0.72rem',
-                              cursor: 'pointer',
-                              outline: 'none'
-                            }}
-                            title="Select any status"
-                          >
-                            <option value="PENDING" style={{ background: '#1e293b', color: '#f59e0b' }}>PENDING</option>
-                            <option value="DONE" style={{ background: '#1e293b', color: '#10b981' }}>DONE</option>
-                            <option value="PROCESSING" style={{ background: '#1e293b', color: '#60a5fa' }}>PROCESSING</option>
-                            <option value="CANCELLED" style={{ background: '#1e293b', color: '#9ca3af' }}>CANCELLED</option>
-                            <option value="FAILED" style={{ background: '#1e293b', color: '#ef4444' }}>FAILED</option>
-                          </select>
-                        </div>
                       </td>
                     </tr>
                   );
@@ -624,7 +537,6 @@ export default function ProcessingHistory() {
         {/* Footer Summary */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
           <span>Showing {history.length} record(s) for User ID {empId}</span>
-          <span>Column: <code>STATUS ENUM('PENDING','PROCESSING','DONE','FAILED','CANCELLED')</code> in <code>SCRAPPER_PROCESSING</code></span>
         </div>
       </div>
     </div>
