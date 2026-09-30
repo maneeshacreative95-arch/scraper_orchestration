@@ -530,35 +530,15 @@ export default function ProcessingHistory() {
                       </td>
                       <td>{getStatusBadge(currentStatus)}</td>
                       <td>
-                        {/* Clean Status Selector: Only PENDING and DONE, displays current status accurately */}
+                        {/* Clean Status Selector: Only PENDING and DONE */}
                         <select
-                          value={currentStatus}
+                          value={currentStatus === 'DONE' ? 'DONE' : 'PENDING'}
                           disabled={isRowLoading}
                           onChange={(e) => handleStatusUpdate(spId, e.target.value)}
                           style={{
-                            background: currentStatus === 'DONE'
-                              ? 'rgba(16, 185, 129, 0.15)'
-                              : (currentStatus === 'FAILED'
-                                ? 'rgba(239, 68, 68, 0.15)'
-                                : (currentStatus === 'PENDING'
-                                  ? 'rgba(245, 158, 11, 0.15)'
-                                  : 'rgba(59, 130, 246, 0.15)')),
-                            color: currentStatus === 'DONE'
-                              ? '#10b981'
-                              : (currentStatus === 'FAILED'
-                                ? '#ef4444'
-                                : (currentStatus === 'PENDING'
-                                  ? '#f59e0b'
-                                  : '#60a5fa')),
-                            border: `1px solid ${
-                              currentStatus === 'DONE'
-                                ? 'rgba(16, 185, 129, 0.4)'
-                                : (currentStatus === 'FAILED'
-                                  ? 'rgba(239, 68, 68, 0.4)'
-                                  : (currentStatus === 'PENDING'
-                                    ? 'rgba(245, 158, 11, 0.4)'
-                                    : 'rgba(59, 130, 246, 0.4)'))
-                            }`,
+                            background: currentStatus === 'DONE' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                            color: currentStatus === 'DONE' ? '#10b981' : '#f59e0b',
+                            border: `1px solid ${currentStatus === 'DONE' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
                             borderRadius: '6px',
                             padding: '4px 10px',
                             fontSize: '0.78rem',
@@ -569,11 +549,6 @@ export default function ProcessingHistory() {
                           }}
                           title="Change status to PENDING or DONE"
                         >
-                          {currentStatus !== 'PENDING' && currentStatus !== 'DONE' && (
-                            <option value={currentStatus} disabled style={{ background: '#0f172a', color: currentStatus === 'FAILED' ? '#ef4444' : '#94a3b8' }}>
-                              {currentStatus}
-                            </option>
-                          )}
                           <option value="PENDING" style={{ background: '#0f172a', color: '#f59e0b', fontWeight: '600' }}>PENDING</option>
                           <option value="DONE" style={{ background: '#0f172a', color: '#10b981', fontWeight: '600' }}>DONE</option>
                         </select>
