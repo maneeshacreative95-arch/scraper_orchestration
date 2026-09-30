@@ -3250,12 +3250,12 @@ app.get('/api/history', handleGetProcessingHistory);
 
 // Endpoint to update or retry/cancel a task in SCRAPPER_PROCESSING
 app.post('/api/scrapper-processing/update-status', async (req, res) => {
-  const { sp_id, status } = req.body || {};
-  if (!sp_id || !status) {
-    return res.status(400).json({ success: false, error: 'sp_id and status are required.' });
+  const { sp_id, sp_ids, status } = req.body || {};
+  if ((!sp_id && (!sp_ids || !Array.isArray(sp_ids) || sp_ids.length === 0)) || !status) {
+    return res.status(400).json({ success: false, error: 'sp_id (or sp_ids array) and status are required.' });
   }
   const targetStatus = String(status).toUpperCase();
-  const allowedStatuses = ['PENDING', 'CANCELLED'];
+  const allowedStatuses = ['PENDING', 'DONE', 'PROCESSING', 'CANCELLED', 'FAILED'];
   if (!allowedStatuses.includes(targetStatus)) {
     return res.status(400).json({ success: false, error: `Status must be one of: ${allowedStatuses.join(', ')}` });
   }
@@ -3263,8 +3263,16 @@ app.post('/api/scrapper-processing/update-status', async (req, res) => {
   const loggedInClientId = req.clientId || 1572;
 
   try {
-    let updateSql = `UPDATE SCRAPPER_PROCESSING SET STATUS = ?, UPDATE_DTM = NOW() WHERE SP_ID = ?`;
-    let updateParams = [targetStatus, sp_id];
+    const ids = sp_ids && Array.isArray(sp_ids)
+      ? sp_ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id))
+      : [parseInt(sp_id, 10)];
+
+    if (ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid task ID provided.' });
+    }
+
+    let updateSql = `UPDATE SCRAPPER_PROCESSING SET STATUS = ?, UPDATE_DTM = NOW() WHERE SP_ID IN (?)`;
+    let updateParams = [targetStatus, ids];
 
     // Non-admins can strictly only modify their own tasks
     if (!req.isAdmin) {
@@ -3274,10 +3282,15 @@ app.post('/api/scrapper-processing/update-status', async (req, res) => {
 
     const [result] = await dbPool.query(updateSql, updateParams);
     if (result.affectedRows === 0) {
-      return res.status(403).json({ success: false, error: 'Task not found or access denied.' });
+      return res.status(403).json({ success: false, error: 'Task(s) not found or access denied.' });
     }
-    logReallocation(`[SCRAPPER_PROCESSING] Task SP_ID ${sp_id} updated to status '${targetStatus}' by User ${loggedInClientId}.`);
-    res.json({ success: true, message: `Task status updated to ${targetStatus}` });
+    logReallocation(`[SCRAPPER_PROCESSING] Task(s) [${ids.join(', ')}] updated to status '${targetStatus}' by User ${loggedInClientId}.`);
+    res.json({
+      success: true,
+      message: `Successfully updated ${result.affectedRows} task(s) to status '${targetStatus}'.`,
+      affectedRows: result.affectedRows,
+      status: targetStatus
+    });
   } catch (err) {
     console.error('[SCRAPPER_PROCESSING UPDATE STATUS ERROR]', err.message);
     res.status(500).json({ success: false, error: err.message });

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api/config';
 import { getAuthContext } from '../utils/auth';
+import Checkbox from '../components/Checkbox';
 import {
   History,
   RefreshCw,
@@ -13,7 +14,7 @@ import {
   RotateCcw,
   Ban,
   User,
-  ExternalLink
+  CheckSquare
 } from 'lucide-react';
 
 export default function ProcessingHistory() {
@@ -28,6 +29,7 @@ export default function ProcessingHistory() {
   const [error, setError] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const fetchHistory = useCallback(async (filter = statusFilter, search = searchQuery) => {
     setIsLoading(true);
@@ -74,7 +76,7 @@ export default function ProcessingHistory() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setActionMessage(`Task #${spId} marked as ${newStatus}.`);
+        setActionMessage(`Task #${spId} status changed to ${newStatus}.`);
         setTimeout(() => setActionMessage(null), 4000);
         fetchHistory();
       } else {
@@ -86,6 +88,56 @@ export default function ProcessingHistory() {
       setActionLoadingId(null);
     }
   };
+
+  const handleBulkStatusUpdate = async (newStatus) => {
+    if (selectedIds.size === 0) return;
+    const idsArray = Array.from(selectedIds);
+    setIsLoading(true);
+    setActionMessage(null);
+    try {
+      const res = await apiFetch('/api/scrapper-processing/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sp_ids: idsArray, status: newStatus })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionMessage(`Successfully changed ${idsArray.length} task(s) to ${newStatus}.`);
+        setSelectedIds(new Set());
+        setTimeout(() => setActionMessage(null), 4000);
+        fetchHistory();
+      } else {
+        alert(data.error || 'Failed to update selected tasks');
+      }
+    } catch (err) {
+      alert(`Error updating tasks: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleToggleItem = (spId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(spId)) {
+        next.delete(spId);
+      } else {
+        next.add(spId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      const allIds = new Set(history.map(row => row.sp_id || row.SP_ID));
+      setSelectedIds(allIds);
+    } else {
+      setSelectedIds(new Set());
+    }
+  };
+
+  const isAllSelected = history.length > 0 && history.every(row => selectedIds.has(row.sp_id || row.SP_ID));
 
   const getStatusBadge = (status) => {
     const s = String(status || '').toUpperCase();
@@ -134,7 +186,7 @@ export default function ProcessingHistory() {
               <h2>SCRAPPER_PROCESSING User History</h2>
             </div>
             <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '4px' }}>
-              Your database queue tasks from SCRAPPER_PROCESSING table.
+              Your database queue tasks from SCRAPPER_PROCESSING table. Manage and update city statuses to PENDING or DONE.
             </p>
           </div>
 
@@ -308,7 +360,7 @@ export default function ProcessingHistory() {
               type="text"
               className="input-style"
               style={{ width: '100%', paddingLeft: '36px' }}
-              placeholder="Search portal name or ID..."
+              placeholder="Search city/portal name or ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -322,7 +374,7 @@ export default function ProcessingHistory() {
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Status Filter:</span>
             {['ALL', 'PENDING', 'DONE', 'PROCESSING', 'CANCELLED'].map((st) => (
               <button
@@ -337,50 +389,133 @@ export default function ProcessingHistory() {
           </div>
         </div>
 
+        {/* Bulk Action Toolbar if rows are selected */}
+        {selectedIds.size > 0 && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '12px 18px',
+            background: 'rgba(59, 130, 246, 0.12)',
+            border: '1px solid rgba(59, 130, 246, 0.3)',
+            borderRadius: '10px',
+            marginBottom: '1.25rem',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <CheckSquare size={18} style={{ color: '#60a5fa' }} />
+              <span style={{ fontSize: '0.88rem', fontWeight: '600', color: '#fff' }}>
+                {selectedIds.size} city/portal(s) selected
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{
+                  color: '#f59e0b',
+                  borderColor: 'rgba(245, 158, 11, 0.4)',
+                  background: 'rgba(245, 158, 11, 0.12)',
+                  fontWeight: '600'
+                }}
+                onClick={() => handleBulkStatusUpdate('PENDING')}
+                disabled={isLoading}
+              >
+                <Clock size={14} />
+                <span>Change Selected to PENDING</span>
+              </button>
+
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{
+                  color: '#10b981',
+                  borderColor: 'rgba(16, 185, 129, 0.4)',
+                  background: 'rgba(16, 185, 129, 0.12)',
+                  fontWeight: '600'
+                }}
+                onClick={() => handleBulkStatusUpdate('DONE')}
+                disabled={isLoading}
+              >
+                <CheckCircle2 size={14} />
+                <span>Change Selected to DONE</span>
+              </button>
+
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                onClick={() => setSelectedIds(new Set())}
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Data Table */}
         <div className="table-container">
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: '40px', textAlign: 'center' }}>
+                  <Checkbox
+                    checked={isAllSelected}
+                    onChange={handleSelectAll}
+                    title="Select / Deselect all"
+                  />
+                </th>
                 <th style={{ width: '80px' }}>SP ID</th>
-                <th>Portal Name</th>
+                <th>Portal / City Name</th>
                 <th>Portal ID</th>
                 <th>User (Emp ID)</th>
-                <th>Status</th>
+                <th>Current Status</th>
                 <th>Queued At</th>
                 <th>Last Updated</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
+                <th style={{ textAlign: 'center', minWidth: '260px' }}>Change Status</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '3rem', color: 'var(--color-text-muted)' }}>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '3rem', color: 'var(--color-text-muted)' }}>
                     <RefreshCw size={24} className="spin-icon" style={{ margin: '0 auto 12px' }} />
                     <p>Loading SCRAPPER_PROCESSING history for User {empId}...</p>
                   </td>
                 </tr>
               ) : history.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '3.5rem', color: 'var(--color-text-muted)' }}>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '3.5rem', color: 'var(--color-text-muted)' }}>
                     <History size={36} style={{ margin: '0 auto 12px', opacity: 0.4 }} />
                     <p style={{ fontSize: '1rem', fontWeight: '600', color: '#fff' }}>No history records found</p>
                     <p style={{ fontSize: '0.85rem', marginTop: '4px' }}>
                       {searchQuery || statusFilter !== 'ALL'
                         ? 'Try clearing the search or status filter.'
-                        : `No portals found in SCRAPPER_PROCESSING for Employee ID ${empId}.`}
+                        : `No portals found in SCRAPPER_PROCESSING for your account (User ID: ${empId}).`}
                     </p>
                   </td>
                 </tr>
               ) : (
                 history.map((row) => {
+                  const spId = row.sp_id || row.SP_ID;
                   const currentStatus = String(row.status || row.STATUS || '').toUpperCase();
-                  const isRowLoading = actionLoadingId === (row.sp_id || row.SP_ID);
+                  const isRowLoading = actionLoadingId === spId;
+                  const isSelected = selectedIds.has(spId);
 
                   return (
-                    <tr key={row.sp_id || row.SP_ID}>
+                    <tr
+                      key={spId}
+                      style={{
+                        background: isSelected ? 'rgba(59, 130, 246, 0.06)' : undefined,
+                        transition: 'background 0.15s ease'
+                      }}
+                    >
+                      <td style={{ textAlign: 'center' }}>
+                        <Checkbox
+                          checked={isSelected}
+                          onChange={() => handleToggleItem(spId)}
+                        />
+                      </td>
                       <td style={{ fontWeight: '600', color: 'var(--color-text-muted)' }}>
-                        #{row.sp_id || row.SP_ID}
+                        #{spId}
                       </td>
                       <td style={{ fontWeight: '600', color: '#fff' }}>
                         {row.portal_name || row.PORTALNAME || 'Unknown'}
@@ -413,33 +548,69 @@ export default function ProcessingHistory() {
                       <td style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                         {formatDate(row.update_dtm || row.UPDATE_DTM)}
                       </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: '6px' }}>
-                          {(currentStatus === 'CANCELLED' || currentStatus === 'FAILED') && (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '4px 8px', fontSize: '0.72rem', color: '#10b981' }}
-                              onClick={() => handleStatusUpdate(row.sp_id || row.SP_ID, 'PENDING')}
-                              disabled={isRowLoading}
-                              title="Re-queue task back to PENDING"
-                            >
-                              <RotateCcw size={12} className={isRowLoading ? 'spin-icon' : ''} />
-                              <span>Re-queue</span>
-                            </button>
-                          )}
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          {/* Quick Change to PENDING */}
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '0.74rem',
+                              color: currentStatus === 'PENDING' ? '#94a3b8' : '#f59e0b',
+                              border: `1px solid ${currentStatus === 'PENDING' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(245, 158, 11, 0.4)'}`,
+                              background: currentStatus === 'PENDING' ? 'rgba(255, 255, 255, 0.03)' : 'rgba(245, 158, 11, 0.12)',
+                              cursor: currentStatus === 'PENDING' ? 'default' : 'pointer'
+                            }}
+                            onClick={() => currentStatus !== 'PENDING' && handleStatusUpdate(spId, 'PENDING')}
+                            disabled={isRowLoading || currentStatus === 'PENDING'}
+                            title={currentStatus === 'PENDING' ? 'Already PENDING' : 'Change status to PENDING'}
+                          >
+                            <Clock size={12} className={isRowLoading ? 'spin-icon' : ''} />
+                            <span>PENDING</span>
+                          </button>
 
-                          {currentStatus === 'PENDING' && (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '4px 8px', fontSize: '0.72rem', color: '#f87171' }}
-                              onClick={() => handleStatusUpdate(row.sp_id || row.SP_ID, 'CANCELLED')}
-                              disabled={isRowLoading}
-                              title="Cancel pending task"
-                            >
-                              <Ban size={12} className={isRowLoading ? 'spin-icon' : ''} />
-                              <span>Cancel</span>
-                            </button>
-                          )}
+                          {/* Quick Change to DONE */}
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '0.74rem',
+                              color: currentStatus === 'DONE' ? '#94a3b8' : '#10b981',
+                              border: `1px solid ${currentStatus === 'DONE' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(16, 185, 129, 0.4)'}`,
+                              background: currentStatus === 'DONE' ? 'rgba(255, 255, 255, 0.03)' : 'rgba(16, 185, 129, 0.12)',
+                              cursor: currentStatus === 'DONE' ? 'default' : 'pointer'
+                            }}
+                            onClick={() => currentStatus !== 'DONE' && handleStatusUpdate(spId, 'DONE')}
+                            disabled={isRowLoading || currentStatus === 'DONE'}
+                            title={currentStatus === 'DONE' ? 'Already DONE' : 'Change status to DONE'}
+                          >
+                            <CheckCircle2 size={12} className={isRowLoading ? 'spin-icon' : ''} />
+                            <span>DONE</span>
+                          </button>
+
+                          {/* Dropdown selector for all valid enum values */}
+                          <select
+                            value={currentStatus}
+                            disabled={isRowLoading}
+                            onChange={(e) => handleStatusUpdate(spId, e.target.value)}
+                            style={{
+                              background: 'rgba(15, 23, 42, 0.85)',
+                              border: '1px solid rgba(255, 255, 255, 0.18)',
+                              borderRadius: '6px',
+                              color: '#cbd5e1',
+                              padding: '3px 8px',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                              outline: 'none'
+                            }}
+                            title="Select any status"
+                          >
+                            <option value="PENDING" style={{ background: '#1e293b', color: '#f59e0b' }}>PENDING</option>
+                            <option value="DONE" style={{ background: '#1e293b', color: '#10b981' }}>DONE</option>
+                            <option value="PROCESSING" style={{ background: '#1e293b', color: '#60a5fa' }}>PROCESSING</option>
+                            <option value="CANCELLED" style={{ background: '#1e293b', color: '#9ca3af' }}>CANCELLED</option>
+                            <option value="FAILED" style={{ background: '#1e293b', color: '#ef4444' }}>FAILED</option>
+                          </select>
                         </div>
                       </td>
                     </tr>
@@ -453,7 +624,7 @@ export default function ProcessingHistory() {
         {/* Footer Summary */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-card)', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
           <span>Showing {history.length} record(s) for User ID {empId}</span>
-          <span>Database table: <code>SCRAPPER_PROCESSING</code></span>
+          <span>Column: <code>STATUS ENUM('PENDING','PROCESSING','DONE','FAILED','CANCELLED')</code> in <code>SCRAPPER_PROCESSING</code></span>
         </div>
       </div>
     </div>
