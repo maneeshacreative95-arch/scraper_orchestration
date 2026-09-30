@@ -20,7 +20,6 @@ export default function PortalValidationTable({
                 title="Select/Deselect All Available Portals"
               />
             </th>
-            <th>STATE</th>
             <th>CITY / TOWN</th>
             <th>ESTIMATED BUSINESSES</th>
             <th>EXISTING BUSINESSES</th>
@@ -65,7 +64,6 @@ export default function PortalValidationTable({
                     }
                   />
                 </td>
-                <td><strong>{res.state}</strong></td>
                 <td>{res.city}</td>
                 <td>{(res.estimated_businesses || 0).toLocaleString()}</td>
                 <td style={{ color: 'var(--accent-color)', fontWeight: 500 }}>
