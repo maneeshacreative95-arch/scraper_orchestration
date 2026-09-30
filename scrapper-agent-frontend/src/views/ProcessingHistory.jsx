@@ -19,7 +19,7 @@ export default function ProcessingHistory() {
   const empId = userId || '919';
 
   const [history, setHistory] = useState([]);
-  const [summary, setSummary] = useState({ total: 0, done: 0, pending: 0 });
+  const [summary, setSummary] = useState({ total: 0, done: 0, pending: 0, failed: 0 });
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -49,7 +49,8 @@ export default function ProcessingHistory() {
           setSummary({
             total: data.summary.total || 0,
             done: data.summary.done || 0,
-            pending: data.summary.pending || 0
+            pending: data.summary.pending || 0,
+            failed: (data.summary.failed || 0) + (data.summary.cancelled || 0)
           });
         }
       } else {
@@ -143,9 +144,21 @@ export default function ProcessingHistory() {
   const getStatusBadge = (status) => {
     const s = String(status || '').toUpperCase();
     if (s === 'DONE' || s === 'COMPLETED') {
-      return <span className="badge badge-completed">Done</span>;
+      return <span className="badge badge-completed">DONE</span>;
     }
-    return <span className="badge badge-pending">Pending</span>;
+    if (s === 'PENDING') {
+      return <span className="badge badge-pending">PENDING</span>;
+    }
+    if (s === 'FAILED') {
+      return <span className="badge badge-failed">FAILED</span>;
+    }
+    if (s === 'PROCESSING') {
+      return <span className="badge badge-running">PROCESSING</span>;
+    }
+    if (s === 'CANCELLED') {
+      return <span className="badge badge-offline">CANCELLED</span>;
+    }
+    return <span className="badge">{status}</span>;
   };
 
   const formatDate = (dateStr) => {
@@ -266,6 +279,26 @@ export default function ProcessingHistory() {
             </div>
             <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#f59e0b' }}>{summary.pending}</div>
           </div>
+
+          {summary.failed > 0 && (
+            <div
+              onClick={() => setStatusFilter('FAILED')}
+              style={{
+                background: statusFilter === 'FAILED' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                border: `1px solid ${statusFilter === 'FAILED' ? '#ef4444' : 'var(--border-card)'}`,
+                borderRadius: '12px',
+                padding: '1rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontSize: '0.75rem', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Failed (FAILED)</span>
+                <AlertTriangle size={16} style={{ color: '#ef4444' }} />
+              </div>
+              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#ef4444' }}>{summary.failed}</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -329,7 +362,7 @@ export default function ProcessingHistory() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Status Filter:</span>
-            {['ALL', 'PENDING', 'DONE'].map((st) => (
+            {['ALL', 'PENDING', 'DONE', ...(summary.failed > 0 ? ['FAILED'] : [])].map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -497,15 +530,35 @@ export default function ProcessingHistory() {
                       </td>
                       <td>{getStatusBadge(currentStatus)}</td>
                       <td>
-                        {/* Clean Status Selector: Only PENDING and DONE */}
+                        {/* Clean Status Selector: Only PENDING and DONE, displays current status accurately */}
                         <select
-                          value={isDone ? 'DONE' : 'PENDING'}
+                          value={currentStatus}
                           disabled={isRowLoading}
                           onChange={(e) => handleStatusUpdate(spId, e.target.value)}
                           style={{
-                            background: isDone ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                            color: isDone ? '#10b981' : '#f59e0b',
-                            border: `1px solid ${isDone ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
+                            background: currentStatus === 'DONE'
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : (currentStatus === 'FAILED'
+                                ? 'rgba(239, 68, 68, 0.15)'
+                                : (currentStatus === 'PENDING'
+                                  ? 'rgba(245, 158, 11, 0.15)'
+                                  : 'rgba(59, 130, 246, 0.15)')),
+                            color: currentStatus === 'DONE'
+                              ? '#10b981'
+                              : (currentStatus === 'FAILED'
+                                ? '#ef4444'
+                                : (currentStatus === 'PENDING'
+                                  ? '#f59e0b'
+                                  : '#60a5fa')),
+                            border: `1px solid ${
+                              currentStatus === 'DONE'
+                                ? 'rgba(16, 185, 129, 0.4)'
+                                : (currentStatus === 'FAILED'
+                                  ? 'rgba(239, 68, 68, 0.4)'
+                                  : (currentStatus === 'PENDING'
+                                    ? 'rgba(245, 158, 11, 0.4)'
+                                    : 'rgba(59, 130, 246, 0.4)'))
+                            }`,
                             borderRadius: '6px',
                             padding: '4px 10px',
                             fontSize: '0.78rem',
@@ -516,6 +569,11 @@ export default function ProcessingHistory() {
                           }}
                           title="Change status to PENDING or DONE"
                         >
+                          {currentStatus !== 'PENDING' && currentStatus !== 'DONE' && (
+                            <option value={currentStatus} disabled style={{ background: '#0f172a', color: currentStatus === 'FAILED' ? '#ef4444' : '#94a3b8' }}>
+                              {currentStatus}
+                            </option>
+                          )}
                           <option value="PENDING" style={{ background: '#0f172a', color: '#f59e0b', fontWeight: '600' }}>PENDING</option>
                           <option value="DONE" style={{ background: '#0f172a', color: '#10b981', fontWeight: '600' }}>DONE</option>
                         </select>
