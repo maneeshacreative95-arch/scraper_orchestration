@@ -3115,11 +3115,28 @@ app.post('/api/orchestrate/add-to-processing', async (req, res) => {
   }
 });
 
-// Endpoint to fetch user's past history in SCRAPPER_PROCESSING filtered by userid (EMP_ID)
+// Endpoint to fetch user's past history in SCRAPPER_PROCESSING filtered strictly by logged-in user's EMP_ID
 async function handleGetProcessingHistory(req, res) {
   try {
-    const rawUserId = req.params.userId || req.query.userid || req.query.user_id || req.query.emp_id || req.query.empid || req.clientId || 1572;
-    const empId = parseInt(rawUserId, 10);
+    const loggedInClientId = req.clientId || 1572;
+    const requestedUserId = req.params.userId || req.query.userid || req.query.user_id || req.query.emp_id || req.query.empid;
+
+    let empId = loggedInClientId;
+
+    // Strict Security Rule: Non-admin users are ONLY allowed to see their own history
+    if (requestedUserId) {
+      const parsedRequested = parseInt(requestedUserId, 10);
+      if (!isNaN(parsedRequested) && parsedRequested !== loggedInClientId) {
+        if (!req.isAdmin) {
+          console.warn(`[SECURITY 403] Non-admin Client ${loggedInClientId} attempted unauthorized access to history of User ${parsedRequested}`);
+          return res.status(403).json({
+            success: false,
+            error: '403 Forbidden: Cross-user data access is strictly prohibited. You may only view your own processing history.'
+          });
+        }
+        empId = parsedRequested;
+      }
+    }
 
     if (isNaN(empId) || empId <= 0) {
       return res.status(400).json({ success: false, error: 'Invalid User/Employee ID provided.' });
@@ -3243,15 +3260,23 @@ app.post('/api/scrapper-processing/update-status', async (req, res) => {
     return res.status(400).json({ success: false, error: `Status must be one of: ${allowedStatuses.join(', ')}` });
   }
 
+  const loggedInClientId = req.clientId || 1572;
+
   try {
-    const [result] = await dbPool.query(
-      `UPDATE SCRAPPER_PROCESSING SET STATUS = ?, UPDATE_DTM = NOW() WHERE SP_ID = ?`,
-      [targetStatus, sp_id]
-    );
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, error: 'Task not found in SCRAPPER_PROCESSING.' });
+    let updateSql = `UPDATE SCRAPPER_PROCESSING SET STATUS = ?, UPDATE_DTM = NOW() WHERE SP_ID = ?`;
+    let updateParams = [targetStatus, sp_id];
+
+    // Non-admins can strictly only modify their own tasks
+    if (!req.isAdmin) {
+      updateSql += ` AND EMP_ID = ?`;
+      updateParams.push(loggedInClientId);
     }
-    logReallocation(`[SCRAPPER_PROCESSING] Task SP_ID ${sp_id} updated to status '${targetStatus}'.`);
+
+    const [result] = await dbPool.query(updateSql, updateParams);
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ success: false, error: 'Task not found or access denied.' });
+    }
+    logReallocation(`[SCRAPPER_PROCESSING] Task SP_ID ${sp_id} updated to status '${targetStatus}' by User ${loggedInClientId}.`);
     res.json({ success: true, message: `Task status updated to ${targetStatus}` });
   } catch (err) {
     console.error('[SCRAPPER_PROCESSING UPDATE STATUS ERROR]', err.message);

@@ -17,10 +17,9 @@ import {
 } from 'lucide-react';
 
 export default function ProcessingHistory() {
-  const auth = getAuthContext();
-  const defaultUser = auth.userId || '1572';
+  const { userId } = getAuthContext();
+  const empId = userId || '919';
 
-  const [empId, setEmpId] = useState(defaultUser);
   const [history, setHistory] = useState([]);
   const [summary, setSummary] = useState({ total: 0, done: 0, pending: 0, processing: 0, cancelled: 0, failed: 0 });
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -30,11 +29,11 @@ export default function ProcessingHistory() {
   const [actionMessage, setActionMessage] = useState(null);
   const [actionLoadingId, setActionLoadingId] = useState(null);
 
-  const fetchHistory = useCallback(async (targetEmp = empId, filter = statusFilter, search = searchQuery) => {
+  const fetchHistory = useCallback(async (filter = statusFilter, search = searchQuery) => {
     setIsLoading(true);
     setError(null);
     try {
-      let url = `/api/scrapper-processing/history?userid=${encodeURIComponent(targetEmp)}`;
+      let url = `/api/scrapper-processing/history?userid=${encodeURIComponent(empId)}`;
       if (filter && filter !== 'ALL') {
         url += `&status=${encodeURIComponent(filter)}`;
       }
@@ -61,8 +60,8 @@ export default function ProcessingHistory() {
   }, [empId, statusFilter, searchQuery]);
 
   useEffect(() => {
-    fetchHistory(empId, statusFilter, searchQuery);
-  }, [empId, statusFilter, searchQuery, fetchHistory]);
+    fetchHistory(statusFilter, searchQuery);
+  }, [statusFilter, searchQuery, fetchHistory]);
 
   const handleStatusUpdate = async (spId, newStatus) => {
     setActionLoadingId(spId);
@@ -135,30 +134,23 @@ export default function ProcessingHistory() {
               <h2>SCRAPPER_PROCESSING User History</h2>
             </div>
             <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '4px' }}>
-              All database queue tasks assigned to Employee ID filtered from SCRAPPER_PROCESSING table.
+              Your database queue tasks from SCRAPPER_PROCESSING table.
             </p>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255, 255, 255, 0.04)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border-card)' }}>
-              <User size={16} style={{ color: 'var(--color-text-muted)' }} />
-              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>User / Emp ID:</span>
-              <input
-                type="number"
-                value={empId}
-                onChange={(e) => setEmpId(e.target.value)}
-                style={{
-                  width: '90px',
-                  background: 'rgba(0, 0, 0, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '4px',
-                  color: '#fff',
-                  padding: '4px 8px',
-                  fontSize: '0.85rem',
-                  fontWeight: '600'
-                }}
-                placeholder="1572"
-              />
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'rgba(59, 130, 246, 0.1)',
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: '1px solid rgba(59, 130, 246, 0.25)'
+            }}>
+              <User size={15} style={{ color: '#60a5fa' }} />
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Logged-in User:</span>
+              <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#60a5fa' }}>{empId}</span>
             </div>
 
             <button
