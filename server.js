@@ -3297,6 +3297,204 @@ app.post('/api/scrapper-processing/update-status', async (req, res) => {
   }
 });
 
+// ==========================================
+// KF_CATEGORY & SCRAPPER_TASK_CATEGORIES APIS
+// ==========================================
+
+// 1. Fetch all available categories from KF_CATEGORY
+app.get('/api/categories', async (req, res) => {
+  try {
+    const [rows] = await dbPool.query(
+      `SELECT ID, MAIN_CATEGORY, SUB_CATEGORY, TYPE, STATUS, PRIORITY
+       FROM KF_CATEGORY
+       WHERE STATUS = 'ACTIVE' AND SUB_CATEGORY IS NOT NULL AND SUB_CATEGORY != ''
+       ORDER BY MAIN_CATEGORY ASC, SUB_CATEGORY ASC`
+    );
+
+    // Group categories by MAIN_CATEGORY for easy dropdown rendering
+    const grouped = {};
+    const mainCategories = [];
+
+    for (const r of rows) {
+      const main = r.MAIN_CATEGORY || 'General';
+      if (!grouped[main]) {
+        grouped[main] = [];
+        mainCategories.push(main);
+      }
+      grouped[main].push({
+        id: r.ID,
+        category_id: r.ID,
+        main_category: r.MAIN_CATEGORY,
+        sub_category: r.SUB_CATEGORY,
+        type: r.TYPE,
+        priority: r.PRIORITY
+      });
+    }
+
+    res.json({
+      success: true,
+      total: rows.length,
+      main_categories: mainCategories,
+      categories: rows.map(r => ({
+        id: r.ID,
+        category_id: r.ID,
+        main_category: r.MAIN_CATEGORY,
+        sub_category: r.SUB_CATEGORY,
+        type: r.TYPE,
+        priority: r.PRIORITY
+      })),
+      grouped
+    });
+  } catch (err) {
+    console.error('[CATEGORIES FETCH ERROR]', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Fetch user's persistent category selection from SCRAPPER_TASK_CATEGORIES
+app.get(['/api/user-categories', '/api/user-categories/:userId'], async (req, res) => {
+  try {
+    const loggedInClientId = req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
+    const requestedUserId = req.params.userId || req.query.emp_id || req.query.user_id || req.query.client_id;
+    const empId = parseInt(requestedUserId || loggedInClientId, 10) || 1572;
+
+    const [rows] = await dbPool.query(
+      `SELECT ID, EMP_ID, CATEGORY_ID, MAIN_CATEGORY, SUB_CATEGORY, STATUS, UPDATE_DTM
+       FROM SCRAPPER_TASK_CATEGORIES
+       WHERE EMP_ID = ? AND STATUS = 'ACTIVE'
+       ORDER BY MAIN_CATEGORY ASC, SUB_CATEGORY ASC`,
+      [empId]
+    );
+
+    const hasAll = rows.some(r => String(r.SUB_CATEGORY).toUpperCase() === 'ALL');
+    const selected = hasAll ? [] : rows.map(r => r.SUB_CATEGORY);
+    const mode = (hasAll || rows.length === 0) ? 'ALL' : 'CUSTOM';
+
+    res.json({
+      success: true,
+      emp_id: empId,
+      mode,
+      has_all: hasAll,
+      selected_categories: selected,
+      count: selected.length,
+      records: rows
+    });
+  } catch (err) {
+    console.error('[USER CATEGORIES GET ERROR]', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Save / Update user's persistent category selection in SCRAPPER_TASK_CATEGORIES
+app.post('/api/user-categories', async (req, res) => {
+  const { mode = 'ALL', categories = [], emp_id, target_emp_id } = req.body || {};
+  const loggedInClientId = req.clientId || req.headers['x-user-id'] || req.headers['x-client-id'] || 1572;
+  const empId = parseInt(target_emp_id || emp_id || loggedInClientId, 10) || 1572;
+
+  let connection;
+  try {
+    connection = await dbPool.getConnection();
+    await connection.beginTransaction();
+
+    if (String(mode).toUpperCase() === 'ALL' || !Array.isArray(categories) || categories.length === 0) {
+      // Set all existing categories for this user to INACTIVE
+      await connection.query(
+        `UPDATE SCRAPPER_TASK_CATEGORIES SET STATUS = 'INACTIVE', UPDATE_DTM = NOW() WHERE EMP_ID = ?`,
+        [empId]
+      );
+
+      // Upsert the 'ALL' row
+      await connection.query(
+        `INSERT INTO SCRAPPER_TASK_CATEGORIES 
+           (EMP_ID, CATEGORY_ID, MAIN_CATEGORY, SUB_CATEGORY, STATUS, INSRT_DTM, UPDATE_DTM)
+         VALUES 
+           (?, NULL, 'ALL', 'ALL', 'ACTIVE', NOW(), NOW())
+         ON DUPLICATE KEY UPDATE 
+           STATUS = 'ACTIVE', UPDATE_DTM = NOW()`,
+        [empId]
+      );
+
+      await connection.commit();
+      logReallocation(`[CATEGORY CONFIG] User ${empId} set category mode to 'ALL' (all categories enabled).`);
+      return res.json({
+        success: true,
+        emp_id: empId,
+        mode: 'ALL',
+        message: 'Successfully set to scrape ALL categories.'
+      });
+    }
+
+    // Custom categories mode
+    // Deactivate 'ALL' record
+    await connection.query(
+      `UPDATE SCRAPPER_TASK_CATEGORIES SET STATUS = 'INACTIVE', UPDATE_DTM = NOW() WHERE EMP_ID = ? AND SUB_CATEGORY = 'ALL'`,
+      [empId]
+    );
+
+    // Normalize categories list (handles either string array or object array with id/main/sub)
+    const normalizedCats = categories.map(c => {
+      if (typeof c === 'string') {
+        return { sub_category: c.trim(), main_category: null, category_id: null };
+      }
+      return {
+        sub_category: (c.sub_category || c.SUB_CATEGORY || '').trim(),
+        main_category: c.main_category || c.MAIN_CATEGORY || null,
+        category_id: c.category_id || c.CATEGORY_ID || c.id || null
+      };
+    }).filter(c => c.sub_category && c.sub_category.toUpperCase() !== 'ALL');
+
+    if (normalizedCats.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, error: 'At least one valid category must be provided for custom mode.' });
+    }
+
+    const subCategoryNames = normalizedCats.map(c => c.sub_category);
+
+    // Deactivate any categories previously chosen that are no longer in this selection
+    await connection.query(
+      `UPDATE SCRAPPER_TASK_CATEGORIES 
+       SET STATUS = 'INACTIVE', UPDATE_DTM = NOW() 
+       WHERE EMP_ID = ? AND SUB_CATEGORY NOT IN (?)`,
+      [empId, subCategoryNames]
+    );
+
+    // Upsert each selected category
+    for (const item of normalizedCats) {
+      await connection.query(
+        `INSERT INTO SCRAPPER_TASK_CATEGORIES 
+           (EMP_ID, CATEGORY_ID, MAIN_CATEGORY, SUB_CATEGORY, STATUS, INSRT_DTM, UPDATE_DTM)
+         VALUES 
+           (?, ?, ?, ?, 'ACTIVE', NOW(), NOW())
+         ON DUPLICATE KEY UPDATE 
+           STATUS = 'ACTIVE',
+           CATEGORY_ID = COALESCE(VALUES(CATEGORY_ID), CATEGORY_ID),
+           MAIN_CATEGORY = COALESCE(VALUES(MAIN_CATEGORY), MAIN_CATEGORY),
+           UPDATE_DTM = NOW()`,
+        [empId, item.category_id, item.main_category, item.sub_category]
+      );
+    }
+
+    await connection.commit();
+    logReallocation(`[CATEGORY CONFIG] User ${empId} saved ${normalizedCats.length} custom category selection(s).`);
+
+    res.json({
+      success: true,
+      emp_id: empId,
+      mode: 'CUSTOM',
+      count: normalizedCats.length,
+      categories: subCategoryNames,
+      message: `Successfully saved ${normalizedCats.length} category preference(s).`
+    });
+
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error('[USER CATEGORIES POST ERROR]', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 // Distributed Runner Registry Endpoints (Step 5)
 app.get('/api/runners', (req, res) => {
   res.json({ success: true, runners: runnerRegistry });

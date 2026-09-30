@@ -6,6 +6,7 @@ import Header from './components/Header';
 import CityDiscovery from './views/CityDiscovery';
 import AgentRegistry from './views/AgentRegistry';
 import ProcessingHistory from './views/ProcessingHistory';
+import CategorySelection from './views/CategorySelection';
 import GenericView from './views/GenericView';
 import { checkAuthAndRedirect, saveRedirectAfterLogin, getAuthContext } from './utils/auth';
 import {
@@ -67,6 +68,8 @@ export default function App() {
             <Route path="/city-discovery" element={<CityDiscovery runners={runners} onRefreshStatus={fetchStatus} />} />
             <Route path="/processing-history" element={<ProcessingHistory />} />
             <Route path="/history" element={<Navigate to="/processing-history" replace />} />
+            <Route path="/category-selection" element={<CategorySelection />} />
+            <Route path="/categories" element={<Navigate to="/category-selection" replace />} />
             <Route path="/agent-registry" element={<AgentRegistry runners={runners} onRefreshStatus={fetchStatus} />} />
             <Route path="/agent-allocation" element={<GenericView title="Agent Allocation" description="Automated runner network load balancer and batch distributor." icon={Sliders} />} />
             <Route path="/batch-scheduler" element={<GenericView title="Batch Scheduler" description="Dynamic workflow batch partitioner and queue scheduler." icon={Calendar} />} />

@@ -11,12 +11,14 @@ import {
   Zap,
   AlertTriangle,
   CheckCircle2,
-  History
+  History,
+  Layers
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { id: 'city-discovery', path: '/city-discovery', label: 'City Discovery', icon: Compass },
   { id: 'processing-history', path: '/processing-history', label: 'Processing History', icon: History },
+  { id: 'category-selection', path: '/category-selection', label: 'Category Selection', icon: Layers },
   { id: 'agent-registry', path: '/agent-registry', label: 'Agent Registry', icon: Bot },
   { id: 'agent-allocation', path: '/agent-allocation', label: 'Agent Allocation', icon: Sliders },
   { id: 'batch-scheduler', path: '/batch-scheduler', label: 'Batch Scheduler', icon: Calendar },
