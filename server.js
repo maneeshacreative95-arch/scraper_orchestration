@@ -583,11 +583,14 @@ function handleWsConnection(ws, req) {
       const data = JSON.parse(messageStr);
       const eventType = data.event || data.type || data.action;
 
-      const activeRunnerId = data.runner_id || authenticatedRunnerId;
+      const activeRunnerId = authenticatedRunnerId || data.runner_id;
       if (activeRunnerId) {
-        const clientObj = wsConnectedRunners.get(activeRunnerId);
+        let clientObj = wsConnectedRunners.get(activeRunnerId);
+        if (!clientObj && authenticatedRunnerId) clientObj = wsConnectedRunners.get(authenticatedRunnerId);
+        if (!clientObj && data.runner_id) clientObj = wsConnectedRunners.get(data.runner_id);
         if (clientObj) clientObj.last_heartbeat = new Date();
-        const regItem = runnerRegistry.find(r => r.runner_id === activeRunnerId);
+
+        let regItem = runnerRegistry.find(r => r.runner_id === activeRunnerId || (authenticatedRunnerId && r.runner_id === authenticatedRunnerId) || (data.runner_id && r.runner_id === data.runner_id));
         if (regItem) regItem.last_heartbeat = new Date();
       }
 
@@ -696,28 +699,34 @@ function handleWsConnection(ws, req) {
         }));
 
       } else if (eventType === 'heartbeat') {
-        const runnerId = data.runner_id || authenticatedRunnerId;
-        if (runnerId && wsConnectedRunners.has(runnerId)) {
-          const clientObj = wsConnectedRunners.get(runnerId);
+        const runnerId = authenticatedRunnerId || data.runner_id;
+        let clientObj = wsConnectedRunners.get(runnerId);
+        if (!clientObj && authenticatedRunnerId) clientObj = wsConnectedRunners.get(authenticatedRunnerId);
+        if (!clientObj && data.runner_id) clientObj = wsConnectedRunners.get(data.runner_id);
+
+        if (runnerId && clientObj) {
           const isRunning = data.status && (String(data.status).toLowerCase() === 'running' || data.status === 'Busy');
 
           // Check if runner is in Stopping grace period — don't let Running heartbeats override it
-          const stoppingExpiry = stoppingRunners.get(runnerId);
+          const stoppingExpiry = stoppingRunners.get(runnerId) || (authenticatedRunnerId ? stoppingRunners.get(authenticatedRunnerId) : null);
           const isInStoppingGrace = stoppingExpiry && Date.now() < stoppingExpiry;
 
           if (isInStoppingGrace && isRunning) {
             // Runner exe still reporting Running mid-stop — hold 'Stopping' status, only update heartbeat time
-            const clientObj2 = wsConnectedRunners.get(runnerId);
-            if (clientObj2) clientObj2.last_heartbeat = new Date();
-            const regItem2 = runnerRegistry.find(r => r.runner_id === runnerId);
+            clientObj.last_heartbeat = new Date();
+            const regItem2 = runnerRegistry.find(r => r.runner_id === runnerId || (authenticatedRunnerId && r.runner_id === authenticatedRunnerId));
             if (regItem2) regItem2.last_heartbeat = new Date();
           } else {
             // Normal heartbeat processing
-            if (!isRunning) stoppingRunners.delete(runnerId); // Clear stopping grace when exe confirms idle
+            if (!isRunning) {
+              stoppingRunners.delete(runnerId);
+              if (authenticatedRunnerId) stoppingRunners.delete(authenticatedRunnerId);
+            }
             clientObj.status = isRunning ? 'Running' : 'Idle';
+            clientObj.last_heartbeat = new Date();
             if (data.version) clientObj.version = data.version;
 
-            let regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+            let regItem = runnerRegistry.find(r => r.runner_id === runnerId || (authenticatedRunnerId && r.runner_id === authenticatedRunnerId) || (data.runner_id && r.runner_id === data.runner_id));
             if (!regItem) {
               regItem = {
                 runner_id: runnerId,
@@ -747,30 +756,31 @@ function handleWsConnection(ws, req) {
               }
             }
           }
+        }
 
-          // Send ACK to maintain active 2-way WebSocket connection with runner
-          if (ws.readyState === WebSocket.OPEN) {
-            try {
-              ws.send(JSON.stringify({ event: 'ack', type: 'heartbeat', status: 'ok', timestamp: new Date().toISOString() }));
-            } catch (e) { }
-          }
+        // Send ACK to maintain active 2-way WebSocket connection with runner
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ event: 'ack', type: 'heartbeat', status: 'ok', timestamp: new Date().toISOString() }));
+          } catch (e) { }
         }
 
       } else if (eventType === 'progress') {
-        const runnerId = data.runner_id || authenticatedRunnerId;
+        const runnerId = authenticatedRunnerId || data.runner_id;
         console.log(`[WEBSOCKET PROGRESS] Runner '${runnerId}': Category '${data.category || '-'}', Status '${data.status || '-'}', ExecID '${data.execution_id || '-'}'`);
 
-        if (runnerId && wsConnectedRunners.has(runnerId)) {
-          const clientObj = wsConnectedRunners.get(runnerId);
+        let clientObj = wsConnectedRunners.get(runnerId);
+        if (!clientObj && authenticatedRunnerId) clientObj = wsConnectedRunners.get(authenticatedRunnerId);
+        if (clientObj) {
           clientObj.last_heartbeat = new Date();
           // Only update to Running if not in Stopping grace period
-          const stoppingExpiry = stoppingRunners.get(runnerId);
+          const stoppingExpiry = stoppingRunners.get(runnerId) || (authenticatedRunnerId ? stoppingRunners.get(authenticatedRunnerId) : null);
           if (!stoppingExpiry || Date.now() >= stoppingExpiry) {
             clientObj.status = 'Running';
           }
         }
 
-        const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        const regItem = runnerRegistry.find(r => r.runner_id === runnerId || (authenticatedRunnerId && r.runner_id === authenticatedRunnerId) || (data.runner_id && r.runner_id === data.runner_id));
         if (regItem) {
           regItem.last_heartbeat = new Date();
           regItem.status = 'Running';
@@ -787,10 +797,10 @@ function handleWsConnection(ws, req) {
         }
 
       } else if (eventType === 'execution_completed') {
-        const runnerId = data.runner_id || authenticatedRunnerId;
+        const runnerId = authenticatedRunnerId || data.runner_id;
         console.log(`[WEBSOCKET COMPLETED] Runner '${runnerId}' completed task (SP_ID: ${data.sp_id || '-'}, Portal: ${data.portal_id || '-'})`);
 
-        const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        const regItem = runnerRegistry.find(r => r.runner_id === runnerId || (authenticatedRunnerId && r.runner_id === authenticatedRunnerId));
         if (regItem) {
           regItem.status = 'Idle';
           regItem.current_workflow = null;
@@ -812,7 +822,7 @@ function handleWsConnection(ws, req) {
 
         logReallocationEvent({
           event_type: 'WS Task Completed',
-          from_agent: data.runner_id || authenticatedRunnerId || 'Runner',
+          from_agent: authenticatedRunnerId || data.runner_id || 'Runner',
           to_agent: '-',
           portal_id: data.portal_id || '-',
           city_batch: data.portal_name || data.category || (matchingCity ? matchingCity.city_name : '-'),
@@ -823,10 +833,10 @@ function handleWsConnection(ws, req) {
         dispatchNextQueuedBatch(runnerId);
 
       } else if (eventType === 'execution_failed') {
-        const runnerId = data.runner_id || authenticatedRunnerId;
+        const runnerId = authenticatedRunnerId || data.runner_id;
         console.error(`[WEBSOCKET FAILED] Runner '${runnerId}' failed task: ${data.error}`);
 
-        const regItem = runnerRegistry.find(r => r.runner_id === runnerId);
+        const regItem = runnerRegistry.find(r => r.runner_id === runnerId || (authenticatedRunnerId && r.runner_id === authenticatedRunnerId));
         if (regItem) regItem.status = 'Idle';
 
         const matchingCity = cityQueue.find(c =>
@@ -872,7 +882,7 @@ function handleWsConnection(ws, req) {
         // Only mark Disconnected if runner didn't reconnect in the meantime
         if (!wsConnectedRunners.has(authenticatedRunnerId)) {
           const regItem = runnerRegistry.find(r => r.runner_id === authenticatedRunnerId);
-          if (regItem && regItem.status !== 'Idle' && regItem.status !== 'Offline') {
+          if (regItem && regItem.status !== 'Offline' && regItem.status !== 'Running') {
             regItem.status = 'Disconnected';
             console.log(`[WEBSOCKET DISCONNECT] Runner '${authenticatedRunnerId}' marked as Disconnected after 30s grace period.`);
           }
@@ -934,16 +944,6 @@ function getConnectedWsRunner(runnerOrAgent) {
         if (heartbeatAgeSec <= 60 && info.client_id === targetClientId) {
           return info;
         }
-      }
-    }
-  }
-
-  // 3. Fallback: Any active connected WebSocket runner
-  for (const [id, info] of wsConnectedRunners.entries()) {
-    if (info && info.ws && info.ws.readyState === WebSocket.OPEN) {
-      const heartbeatAgeSec = (Date.now() - new Date(info.last_heartbeat).getTime()) / 1000;
-      if (heartbeatAgeSec <= 60) {
-        return info;
       }
     }
   }
@@ -4272,10 +4272,18 @@ async function allocationEngine() {
   runnerRegistry.forEach(r => {
     const wsInfo = getConnectedWsRunner(r);
     if (!wsInfo) {
+      // Respect 30s disconnect grace period if runner recently dropped and is reconnecting
+      if (disconnectTimers.has(r.runner_id)) return;
+
       if (r.status !== 'Running') {
         r.status = 'Disconnected';
       }
     } else {
+      // Runner is active, clear any pending disconnect timer
+      if (disconnectTimers.has(r.runner_id)) {
+        clearTimeout(disconnectTimers.get(r.runner_id));
+        disconnectTimers.delete(r.runner_id);
+      }
       if (r.status === 'Disconnected' || r.status === 'Offline') {
         r.status = 'Idle';
       }
@@ -4851,8 +4859,11 @@ async function monitorEngine() {
           }
         }
       }
-    } else if (r.status !== 'Crashed' && r.status !== 'Offline') {
-      r.last_heartbeat = now;
+    } else if (r.status !== 'Crashed' && r.status !== 'Offline' && r.status !== 'Disconnected') {
+      const isWsActive = isRunnerConnectedAndActive(r);
+      if (isWsActive) {
+        r.last_heartbeat = now;
+      }
     }
   });
 

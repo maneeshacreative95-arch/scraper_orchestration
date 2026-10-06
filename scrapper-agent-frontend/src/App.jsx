@@ -57,11 +57,13 @@ export default function App() {
 
 
 
+  const connectedRunnersCount = runners.filter(r => r.status === 'Idle' || r.status === 'Running' || r.status === 'Busy').length;
+
   return (
     <div className="app-layout">
       <Sidebar />
       <main className="main-content">
-        <Header activeTabLabel={location.pathname} runnersCount={runners.length} sessionUser={sessionUser} />
+        <Header activeTabLabel={location.pathname} runnersCount={connectedRunnersCount} sessionUser={sessionUser} />
         <div className="app-container">
           <Routes>
             <Route path="/" element={<Navigate to="/city-discovery" replace />} />
